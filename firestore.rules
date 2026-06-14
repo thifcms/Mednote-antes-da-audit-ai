@@ -1,0 +1,167 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection Test Document (Public Read for health check)
+    match /_connection_test_/{docId} {
+      allow get: if true;
+    }
+
+    // 0.1 Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 2. Validation Blueprints
+    function isValidInvoice(data) {
+      return data.keys().hasAll(['date', 'grossAmount', 'userId', 'createdAt']) &&
+             data.date is string &&
+             data.grossAmount is number &&
+             data.userId == request.auth.uid &&
+             (data.get('netAmount', 0) is number) &&
+             (data.get('description', '') is string) &&
+             (data.get('noteNumber', '') is string) &&
+             (data.get('mappedPayerId', '') is string) &&
+             (data.get('originalPayerName', '') is string);
+    }
+
+    function isValidSurgery(data) {
+      return data.keys().hasAll(['date', 'patientName', 'userId', 'createdAt']) &&
+             data.date is string &&
+             data.patientName is string && data.patientName.size() <= 500 &&
+             data.userId == request.auth.uid &&
+             (data.get('procedure', '') is string && data.get('procedure', '').size() <= 1000) &&
+             (data.get('indication', '') is string && data.get('indication', '').size() <= 1000) &&
+             (data.get('insurance', '') is string && data.get('insurance', '').size() <= 500) &&
+             (data.get('hospitalId', '') is string && data.get('hospitalId', '').size() <= 128) &&
+             (data.get('hospitalName', '') is string) &&
+             (data.get('attendance', '') is string) &&
+             (data.get('company', '') is string) &&
+             (data.get('feesPaid', 0) is number) &&
+             (data.get('receivedAmount', 0) is number) &&
+             (data.get('notes', '') is string) &&
+             (data.get('isParticular', false) is bool) &&
+             (data.get('particularValue', 0) is number) &&
+             (data.get('photos', []) is list);
+    }
+
+    function isValidElectiveSurgery(data) {
+      return data.keys().hasAll(['date', 'patientName', 'userId', 'createdAt']) &&
+             data.date is string &&
+             data.patientName is string && data.patientName.size() <= 500 &&
+             data.userId == request.auth.uid &&
+             (data.get('procedure', '') is string && data.get('procedure', '').size() <= 1000) &&
+             (data.get('hospitalId', '') is string && data.get('hospitalId', '').size() <= 128) &&
+             (data.get('isParticular', false) is bool) &&
+             (data.get('particularValue', 0) is number);
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['date', 'amount', 'userId', 'createdAt']) &&
+             data.date is string &&
+             data.amount is number &&
+             data.userId == request.auth.uid &&
+             (data.get('description', '') is string);
+    }
+
+    function isValidHospital(data) {
+      return data.keys().hasAll(['name', 'userId', 'createdAt']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidPayer(data) {
+      return data.keys().hasAll(['customName', 'userId', 'createdAt']) &&
+             data.customName is string && data.customName.size() <= 200 &&
+             data.userId == request.auth.uid &&
+             (data.get('aliases', []) is list);
+    }
+
+    function isValidUser(data) {
+      return (data.get('taxPercentage', 0) is number);
+    }
+
+    // 4. Collection Matches
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming()) && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['taxPercentage', 'displayName', 'email']);
+
+      match /invoices/{invoiceId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidInvoice(incoming());
+        allow update: if isOwner(userId) && isValidInvoice(incoming()) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'grossAmount', 'netAmount', 'description', 'noteNumber', 'hospitalId', 'mappedPayerId', 'year', 'month', 'amount', 'emissionDayMonth', 'originalPayerName', 'hospitalName', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /surgeries/{surgeryId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidSurgery(incoming());
+        allow update: if isOwner(userId) && isValidSurgery(incoming()) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'indication', 'insurance', 'attendance', 'company', 'feesPaid', 'receivedAmount', 'hospitalId', 'hospitalName', 'notes', 'isParticular', 'particularValue', 'photos', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /electiveSurgeries/{surgeryId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidElectiveSurgery(incoming());
+        allow update: if isOwner(userId) && isValidElectiveSurgery(incoming()) &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /payments/{paymentId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidPayment(incoming());
+        allow update: if isOwner(userId) && isValidPayment(incoming()) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'amount', 'description', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /hospitals/{hospitalId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidHospital(incoming());
+        allow update: if isOwner(userId) && isValidHospital(incoming()) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['name', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /payers/{payerId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidPayer(incoming());
+        allow update: if isOwner(userId) && isValidPayer(incoming()) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['customName', 'aliases', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

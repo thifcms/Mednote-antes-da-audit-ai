@@ -1,0 +1,10 @@
+{
+  "name": "MedNote Pro",
+  "description": "Aplicativo para gestão inteligente de notas médicas e cirurgias com leitura AI de etiquetas e documentos.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

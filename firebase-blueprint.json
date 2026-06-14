@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Medical service invoice record",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "originalPayerName": { "type": "string" },
+        "mappedPayerId": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "year": { "type": "integer" },
+        "month": { "type": "integer" },
+        "hospitalId": { "type": "string" },
+        "noteNumber": { "type": "string" },
+        "emissionDayMonth": { "type": "string" },
+        "grossAmount": { "type": "number" },
+        "netAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["date", "grossAmount", "userId"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Payment received record",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["date", "amount", "userId"]
+    },
+    "PayerMapping": {
+      "title": "Payer Mapping",
+      "description": "Mapping for insurance/payers names",
+      "type": "object",
+      "properties": {
+        "customName": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "userId": { "type": "string" }
+      },
+      "required": ["customName", "userId"]
+    },
+    "Hospital": {
+      "title": "Hospital",
+      "description": "Hospital record",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "userId"]
+    },
+    "Surgery": {
+      "title": "Surgery",
+      "description": "Surgical procedure record",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "hospitalId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "procedure": { "type": "string" },
+        "indication": { "type": "string" },
+        "insurance": { "type": "string" },
+        "attendance": { "type": "string" },
+        "company": { "type": "string" },
+        "feesPaid": { "type": "number" },
+        "receivedAmount": { "type": "number" },
+        "notes": { "type": "string" },
+        "isParticular": { "type": "boolean" },
+        "particularValue": { "type": "number" },
+        "photos": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["date", "patientName", "userId"]
+    },
+    "ElectiveSurgery": {
+      "title": "Elective Surgery",
+      "description": "Scheduled elective surgical procedure",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "hospitalId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "procedure": { "type": "string" },
+        "isParticular": { "type": "boolean" },
+        "particularValue": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["date", "patientName", "userId"]
+    },
+    "UserSettings": {
+      "title": "User Settings",
+      "description": "General settings for the user",
+      "type": "object",
+      "properties": {
+        "taxPercentage": { "type": "number" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "users/{userId}/invoices": {
+      "schema": "Invoice",
+      "description": "User's medical invoices"
+    },
+    "users/{userId}/payments": {
+      "schema": "Payment",
+      "description": "User's received payments"
+    },
+    "users/{userId}/payers": {
+      "schema": "PayerMapping",
+      "description": "User's payer mappings"
+    },
+    "users/{userId}/hospitals": {
+      "schema": "Hospital",
+      "description": "User's hospitals list"
+    },
+    "users/{userId}/surgeries": {
+      "schema": "Surgery",
+      "description": "User's surgery log"
+    },
+    "users/{userId}/electiveSurgeries": {
+      "schema": "ElectiveSurgery",
+      "description": "User's elective surgeries list"
+    },
+    "users": {
+        "schema": "UserSettings",
+        "description": "General user profiles and settings"
+    }
+  }
+}
