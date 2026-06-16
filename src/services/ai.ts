@@ -143,8 +143,7 @@ function mapAuditAiResponse(responseData: any) {
       insurance: etiqueta.convenio || etiqueta.insurance || '',
       date: convertDateToISO(etiqueta.data_atendimento || etiqueta.date || ''),
       procedure: etiqueta.procedimento || etiqueta.procedure || '',
-      company: etiqueta.company || '',
-      hospital: etiqueta.hospital || ''
+      hospital: etiqueta.hospital || '',
     };
   }
 
