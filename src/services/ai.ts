@@ -322,6 +322,20 @@ async function resizeImage(file: File, maxSide: number = 1200): Promise<{ base64
   });
 }
 
+function parseBrazilianCurrency(value: any): number {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === 'number') return value;
+  let str = String(value).trim();
+  str = str.replace(/r\$\s*/gi, '');
+  if (str.includes(',') && str.includes('.')) {
+    str = str.replace(/\./g, '').replace(',', '.');
+  } else if (str.includes(',')) {
+    str = str.replace(',', '.');
+  }
+  const parsed = parseFloat(str);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
 function convertDateToISO(dateStr: any): string {
   if (!dateStr) return '';
   if (typeof dateStr !== 'string') {
@@ -440,10 +454,11 @@ function mapAuditAiResponse(responseData: any) {
   const isInvoice = findField(responseData, ['numeroNota', 'valorTotal', 'emitente', 'cnpjEmitente']) !== undefined;
   if (isInvoice) {
     const emitente = findField(responseData, ['emitente', 'razaoSocial', 'prestador', 'nomeEmitente']) || '';
-    const valorTotal = parseFloat(findField(responseData, ['valorTotal', 'valorBruto', 'valor_total']) || '0');
+    const valorTotalRaw = findField(responseData, ['valorTotal', 'valorBruto', 'valor_total']) || '0';
+    const valorTotal = parseBrazilianCurrency(valorTotalRaw);
     const dataEmissao = findField(responseData, ['dataEmissao', 'data_emissao', 'dataEmis', 'data', 'dtEmissao', 'dt_emissao', 'dataNota', 'data_nota', 'competencia']) || '';
     const valorLiquidoRaw = findField(responseData, ['valorLiquido', 'valor_liquido', 'valorLiq', 'liquido', 'netAmount', 'valor_liquido_servicos', 'vlLiquido']);
-    const valorLiquido = valorLiquidoRaw ? parseFloat(valorLiquidoRaw) : 0;
+    const valorLiquido = parseBrazilianCurrency(valorLiquidoRaw);
     const netAmount = (valorLiquido && valorLiquido > 0) ? valorLiquido : valorTotal;
     const numeroNota = findField(responseData, ['numeroNota', 'numero_nota', 'numNota', 'nota']) || '';
     const cnpjEmitente = findField(responseData, ['cnpjEmitente', 'cnpj_emitente', 'cnpj']) || '';
@@ -577,7 +592,20 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   }
 
   const isSurgery = schema?.properties?.patientName !== undefined;
-  const isMappedEmpty = !mapped || (isSurgery ? !mapped.patientName : (!mapped.originalPayerName || mapped.originalPayerName === 'PACIENTE OU FONTE PAGADORA LOCAL'));
+  let isMappedEmpty = false;
+  if (!mapped) {
+    isMappedEmpty = true;
+  } else if (isSurgery) {
+    isMappedEmpty = !mapped.patientName;
+  } else {
+    // Para Notas Fiscais (Invoices), só ativa o fallback de OCR se NENHUM dos campos críticos foi extraído
+    const hasAmount = mapped.amount && parseFloat(String(mapped.amount)) > 0;
+    const hasDate = mapped.date && mapped.date !== '1970-01-01' && mapped.date !== '';
+    const hasNoteNumber = mapped.noteNumber && mapped.noteNumber.trim() !== '' && mapped.noteNumber !== 'undefined' && mapped.noteNumber !== 'null' && mapped.noteNumber !== '0001';
+    const hasPayer = mapped.originalPayerName && mapped.originalPayerName.trim() !== '' && mapped.originalPayerName !== 'PACIENTE OU FONTE PAGADORA LOCAL';
+    
+    isMappedEmpty = !(hasAmount || hasDate || hasNoteNumber || hasPayer);
+  }
 
   if (isMappedEmpty) {
     console.warn("⚠️ Extração por IA (Audit AI) indisponível ou vazia. Ativando OCR Tesseract Local com heurísticas...");
@@ -607,13 +635,16 @@ export async function extractInvoiceDetails(file: File) {
     const prompt = `Analise esta nota fiscal de serviço (NFS-e) ou recibo médico. Extraia os dados de forma extremamente precisa seguindo as instruções:
 1. "emitente" e "cnpjEmitente" devem referir-se ao TOMADOR DE SERVIÇOS (seção TOMADOR DO SERVIÇO / TOMADOR DE SERVIÇOS, que é quem contrata/paga pelo serviço médico e recebe o reembolso), NUNCA ao prestador de serviços que emitiu a nota.
 2. "numeroNota" deve extrair o Número da Nota de forma precisa (consulte o topo superior direito da nota, ex: "991" ou "00000991").
-3. "dataEmissao" deve extrair a Data de Emissão (extraia do campo "Data e Hora da Emissão" ou similar, ex: "15/05/2026").`;
+3. "dataEmissao" deve extrair a Data de Emissão (extraia do campo "Data e Hora da Emissão" ou similar, ex: "15/05/2026").
+4. "valorTotal" e "valorLiquido" devem ser extraídos como números decimais puros (ex: 1500.00), sem símbolo de moeda (R$), sem ponto de milhar, usando ponto como separador decimal. Se "valorLiquido" não for encontrado na nota, repita o valor de "valorTotal" nele.
+Retorne valorTotal e valorLiquido como números decimais puros (ex: 1500.00), sem símbolo de moeda, sem ponto de milhar.`;
     const schema = {
       type: "object",
       properties: {
         dataEmissao: { type: "string", description: "Data de emissão (ex: 15/05/2026), capturada a partir do campo 'Data e Hora da Emissão'" },
         emitente: { type: "string", description: "Nome ou Razão Social do TOMADOR DE SERVIÇOS (nunca o prestador)" },
-        valorTotal: { type: "number", description: "Valor bruto total do serviço constante na nota" },
+        valorTotal: { type: "number", description: "Valor bruto total do serviço constante na nota como número puramente decimal (ex: 1500.00)" },
+        valorLiquido: { type: "number", description: "Valor líquido do serviço após deduções (ISS, etc). Se não encontrar, use o mesmo valor de valorTotal como número puramente decimal (ex: 1500.00)" },
         numeroNota: { type: "string", description: "Número da nota fiscal correto (geralmente no canto superior direito)" },
         cnpjEmitente: { type: "string", description: "CNPJ do TOMADOR DE SERVIÇOS (seção TOMADOR DO SERVIÇO)" },
         itens: {
@@ -627,7 +658,7 @@ export async function extractInvoiceDetails(file: File) {
           }
         }
       },
-      required: ["dataEmissao", "emitente", "valorTotal", "numeroNota"]
+      required: ["numeroNota"]
     };
     
     const analysis: any = await processImage(file, prompt, schema);
@@ -643,16 +674,17 @@ export async function extractInvoiceDetails(file: File) {
 export async function extractSurgeryLabel(file: File) {
   console.time('OCR_Surgery');
   try {
-    const prompt = `Analise esta etiqueta hospitalar ou de internação. Os dados de texto na imagem podem estar rotacionados em 90 graus (na vertical/deitados) ou em qualquer orientação. Por favor, gire mentalmente a imagem para ler corretamente todos os textos.
-Extraia as seguintes informações no formato JSON plano especificado:
+    const prompt = `Analise esta imagem de etiqueta hospitalar. O texto pode estar em qualquer orientação — reoriente mentalmente para ler corretamente.
 
-1. "patientName" (NOME): O nome completo do paciente. Na etiqueta, ele costuma figurar após o campo de Leito, por exemplo: "Leito: 1148 / Gianlucca Salvini Barbosa" ou em uma linha separada. Procure pelo nome completo de pessoa física em português.
-2. "date" (DATA): A data de entrada, internação ou atendimento. Procure por termos como "Dt.Entr:", "Atend:", "Internação:", ou simplesmente uma data recente em formato DD/MM/AAAA (ex: "05/06/2026"). IMPORTANTE: NUNCA confunda ou use a data de nascimento ("DTNasc:" ou "Nasc:") do paciente para o campo da cirurgia. Formate a data final como YYYY-MM-DD.
-3. "insurance" (CONVÊNIO): O convênio médico ou plano de saúde do paciente. Procure por campos como "Convenio:", "Conv:", "Plano:" ou termos como "BRADESCO SEGUR", "UNIMED", "SULAMERICA", "AMIL", "CASSI", etc.
-4. "attendance" (ATENDIMENTO): O número de atendimento do paciente para faturamento. Geralmente vem precedido por "Atend:" ou "Atendimento:", por exemplo: de "Atend: 55059115", extraia "55059115".
-5. "procedure" (PROCEDIMENTO): O procedimento cirúrgico feito. ATENÇÃO: Procure também por qualquer anotação manual ou texto digital inserido por cima do print da imagem, como por exemplo marcas de edição ou marcações do WhatsApp, ex: "Rlca joelho d" (que significa reconstrução de LCA no joelho direito) ou abreviações de cirurgias no rodapé ou cabeçalho.
-6. "hospital" (HOSPITAL): Nome do hospital onde a etiqueta foi gerada se estiver expresso ou indicado em algum logotipo ou cabeçalho.
-7. "company" (FORNECEDOR OPME): Nome da empresa fornecedora de OPME se houver.`;
+Extraia EXATAMENTE estes campos:
+- patientName: nome completo do paciente (geralmente após "Leito:" ou "Paciente:")
+- attendance: número de atendimento (após "Atend:" ou "Atendimento:")
+- insurance: convênio ou plano de saúde (após "Conv:", "Convênio:", "Plano:" — ex: Unimed, Bradesco, SulAmérica, Amil, Particular)
+- date: data de ENTRADA ou INTERNAÇÃO em formato YYYY-MM-DD (após "Dt.Entr:", "Internação:", "Atend:" — NUNCA use a data de nascimento "DTNasc:" ou "Nasc:")
+- procedure: procedimento cirúrgico, incluindo qualquer anotação manual ou texto adicionado sobre a imagem
+- hospital: nome do hospital se visível
+
+ATENÇÃO: o campo insurance é obrigatório e quase sempre está presente. Não deixe vazio.`;
 
     const schema = {
       type: "object",

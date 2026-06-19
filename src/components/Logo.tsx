@@ -116,7 +116,7 @@ export const Logo: React.FC<LogoProps> = ({ className = "h-8", showText = true, 
             fontSize="48"
             fontWeight="400"
             letterSpacing="-1"
-            fill="#FFFFFF"
+            fill={isDarkBackground ? "#FFFFFF" : "#1e293b"}
           >Note</text>
 
           <line x1="202" y1="105" x2="430" y2="105" stroke="#B8962E" strokeWidth="0.8" opacity="0.55"/>
@@ -127,7 +127,7 @@ export const Logo: React.FC<LogoProps> = ({ className = "h-8", showText = true, 
             fontFamily="var(--font-sans), sans-serif"
             fontSize="8"
             fontWeight="400"
-            fill="rgba(255,255,255,0.45)"
+            fill={isDarkBackground ? "rgba(255,255,255,0.45)" : "rgba(30,41,59,0.55)"}
             style={{ letterSpacing: '0.12em', fontSize: '8px' }}
           >GESTÃO FINANCEIRA MÉDICA</text>
         </g>
