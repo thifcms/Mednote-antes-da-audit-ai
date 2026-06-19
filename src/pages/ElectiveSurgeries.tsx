@@ -40,6 +40,13 @@ export function ElectiveSurgeries() {
       
       const extracted = await extractSurgeryLabel(file);
       
+      if (extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
+        toast.warning(
+          '⚠️ Usando processamento pago — cota gratuita esgotada hoje. Renova à meia-noite (horário de Brasília).',
+          { duration: 8000 }
+        );
+      }
+      
       // Try to find hospital by name if available
       let hospitalId = '';
       if (extracted.hospital && data.hospitals) {

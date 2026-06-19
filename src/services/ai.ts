@@ -567,6 +567,9 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   if (responseOk && responseData) {
     try {
       mapped = mapAuditAiResponse(responseData);
+      if (mapped) {
+        mapped._usedModel = responseData?.usedModel || '';
+      }
     } catch (e) {
       console.warn("⚠️ Falha ao mapear resposta da IA:", e);
     }
@@ -678,7 +681,8 @@ Extraia as seguintes informações no formato JSON plano especificado:
         procedure: res.procedure || res.procedimento || '',
         hospital: res.hospital || '',
         company: res.company || '',
-        aiSourceHash: res.aiSourceHash || ''
+        aiSourceHash: res.aiSourceHash || '',
+        _usedModel: res._usedModel || ''
       };
     };
 

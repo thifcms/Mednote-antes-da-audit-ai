@@ -138,6 +138,13 @@ export function Invoices() {
       setProcessingMessage(isPdf ? 'Processando documento...' : 'Otimizando imagem...');
       setIsModalOpen(true);
       const extracted = await extractInvoiceDetails(file);
+
+      if (extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
+        toast.warning(
+          '⚠️ Usando processamento pago — cota gratuita esgotada hoje. Renova à meia-noite (horário de Brasília).',
+          { duration: 8000 }
+        );
+      }
       
       setProcessingMessage('Mapeando dados...');
 
