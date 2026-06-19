@@ -12,7 +12,7 @@ import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 
 export function Surgeries() {
-  const { data, addSurgery, updateSurgery, deleteSurgery, addHospital, deleteSurgeries, deleteAllSurgeries } = useApp();
+  const { data, addSurgery, updateSurgery, deleteSurgery, addHospital, deleteSurgeries, deleteAllSurgeries, addSurgeryTemplate } = useApp();
   const [activeHospitalId, setActiveHospitalId] = useState<string | 'ALL'>('ALL');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -77,6 +77,7 @@ export function Surgeries() {
     indication: '',
     procedure: ''
   });
+  const [activeSuggestionField, setActiveSuggestionField] = useState<'indication' | 'procedure' | null>(null);
 
   React.useEffect(() => {
     if (draftSurgery) {
@@ -91,6 +92,20 @@ export function Surgeries() {
       });
     }
   }, [draftSurgery]);
+
+  const filteredTemplates = React.useMemo(() => {
+    if (!activeSuggestionField) return [];
+    const val = activeSuggestionField === 'indication' ? formFields.indication : formFields.procedure;
+    if (!val || val.trim().length === 0) return [];
+    
+    const term = val.toLowerCase().trim();
+    return (data.surgery_templates || [])
+      .filter(t => {
+        const matchText = activeSuggestionField === 'indication' ? t.diagnosis : t.procedure;
+        return (matchText || '').toLowerCase().includes(term);
+      })
+      .slice(0, 5);
+  }, [data.surgery_templates, activeSuggestionField, formFields.indication, formFields.procedure]);
   
   const [previewSurgeries, setPreviewSurgeries] = useState<any[] | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -215,8 +230,6 @@ export function Surgeries() {
     if (!targetSurgeryIdForPhoto) return;
     const surgery = data.surgeries.find(s => s.id === targetSurgeryIdForPhoto);
     if (!surgery || !surgery.photos) return;
-
-    if (!window.confirm("Deseja realmente excluir esta foto?")) return;
 
     const newPhotos = surgery.photos.filter((_, i) => i !== viewingPhotoIndex);
     await updateSurgery(targetSurgeryIdForPhoto, { photos: newPhotos });
@@ -373,7 +386,7 @@ export function Surgeries() {
     if (!file) return;
 
     if (file.size < 100) {
-      alert("O arquivo selecionado parece ser um atalho ou está vazio. Se você estiver usando o OneDrive, tente usar a opção 'COLAR' ou baixe o arquivo para o seu dispositivo.");
+      toast.warning("O arquivo selecionado parece ser um atalho ou está vazio. Se você estiver usando o OneDrive, tente usar a opção 'COLAR' ou baixe o arquivo para o seu dispositivo.");
       return;
     }
 
@@ -457,11 +470,11 @@ export function Surgeries() {
             setPreviewSurgeries(allProcessedSurgeries);
             setIsPreviewOpen(true);
           } else {
-            alert('Nenhum dado encontrado nas abas da planilha. Verifique se os cabeçalhos (Data, Paciente, etc.) estão presentes.');
+            toast.warning('Nenhum dado encontrado nas abas da planilha. Verifique se os cabeçalhos (Data, Paciente, etc.) estão presentes.');
           }
         } catch (err) {
           console.error(err);
-          alert('Erro ao ler o Excel. Certifique-se de que é um arquivo .xlsx válido.');
+          toast.error('Erro ao ler o Excel. Certifique-se de que é um arquivo .xlsx válido.');
         } finally {
           setIsImporting(false);
         }
@@ -477,7 +490,7 @@ export function Surgeries() {
       const allLines = pasteContent.split('\n').filter(l => l.trim()).map(line => line.split('\t').map(c => c.trim()));
       
       if (allLines.length < 2) {
-         alert('Conteúdo insuficiente. Copie o cabeçalho e as linhas da planilha.');
+         toast.warning('Conteúdo insuficiente. Copie o cabeçalho e as linhas da planilha.');
          return;
       }
       
@@ -500,18 +513,18 @@ export function Surgeries() {
         setIsPasteModalOpen(false);
         setPasteContent('');
       } else {
-        alert('Nenhum dado válido identificado no texto colado.');
+        toast.warning('Nenhum dado válido identificado no texto colado.');
       }
     } catch (err) {
       console.error(err);
-      alert('Erro ao processar. Copie as células diretamente do Excel.');
+      toast.error('Erro ao processar. Copie as células diretamente do Excel.');
     }
   };
 
   const handleExcelExport = (type: 'current' | 'all') => {
     const listToExport = type === 'current' ? filteredSurgeries : data.surgeries;
     if (listToExport.length === 0) {
-      alert('Nenhum dado para exportar.');
+      toast.warning('Nenhum dado para exportar.');
       return;
     }
 
@@ -603,8 +616,8 @@ export function Surgeries() {
       existing.procedure.toLowerCase().trim() === procedure.toLowerCase().trim()
     );
 
-    if (isDuplicate && !draftSurgery.id && !window.confirm('Esta cirurgia parece já estar cadastrada. Deseja salvar mesmo assim?')) {
-      return;
+    if (isDuplicate && !draftSurgery.id) {
+      toast.warning('Esta cirurgia já constava nos registros. Adicionada duplicidade.');
     }
 
     if (draftSurgery.id) {
@@ -644,6 +657,23 @@ export function Surgeries() {
       });
       toast.success("Cirurgia registrada com sucesso!");
     }
+
+    // Salva diagnóstico e procedimento na coleção de templates para autocompletar futuramente
+    const trimmedIndication = (indication || '').trim();
+    const trimmedProcedure = (procedure || '').trim();
+    if (trimmedIndication && trimmedProcedure) {
+      const alreadyHasTemplate = (data.surgery_templates || []).some(
+        t => t.diagnosis.toLowerCase().trim() === trimmedIndication.toLowerCase() &&
+             t.procedure.toLowerCase().trim() === trimmedProcedure.toLowerCase()
+      );
+      if (!alreadyHasTemplate) {
+        addSurgeryTemplate({
+          diagnosis: trimmedIndication,
+          procedure: trimmedProcedure
+        }).catch(err => console.error("Erro ao salvar template:", err));
+      }
+    }
+
     setDraftSurgery(null);
     setIsModalOpen(false);
     if (hospitalId) setActiveHospitalId(hospitalId);
@@ -917,9 +947,8 @@ export function Surgeries() {
                             <button 
                               onClick={async (e) => {
                                 e.stopPropagation();
-                                if (window.confirm("Tem certeza que deseja apagar esta cirurgia?")) {
-                                  await deleteSurgery(surgery.id);
-                                }
+                                await deleteSurgery(surgery.id);
+                                toast.success("Cirurgia apagada.");
                               }}
                               className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                               title="Excluir"
@@ -1154,37 +1183,75 @@ export function Surgeries() {
                <input name="patientName" type="text" defaultValue={draftSurgery.patientName || ''} className="w-full p-3 text-xs font-bold border rounded-2xl placeholder:zinc-200" placeholder="Nome Completo" required />
             </div>
             <div className="grid grid-cols-2 gap-4">
-               <div>
+               <div className="relative">
                   <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">INDICAÇÃO</label>
                   <input 
                     name="indication" 
-                    list="indications-list" 
                     type="text" 
                     value={formFields.indication}
                     onChange={(e) => setFormFields(prev => ({ ...prev, indication: e.target.value }))}
+                    onFocus={() => setActiveSuggestionField('indication')}
+                    onBlur={() => setTimeout(() => setActiveSuggestionField(null), 250)}
                     autoComplete="off"
                     className="w-full p-3 text-xs font-bold border rounded-2xl" 
                     placeholder="Diagnóstico/Indicação"
                   />
-                  <datalist id="indications-list">
-                    {indicationsForAutocomplete.map(ind => <option key={ind} value={ind}>{ind}</option>)}
-                  </datalist>
+                  {activeSuggestionField === 'indication' && filteredTemplates.length > 0 && (
+                    <div className="absolute z-[9999] left-0 right-0 mt-1 bg-white border border-zinc-200/80 rounded-2xl shadow-xl max-h-48 overflow-y-auto overflow-x-hidden backdrop-blur-md">
+                      {filteredTemplates.map((t, index) => (
+                        <button
+                          key={`${t.id || ''}-${t.diagnosis}-${t.procedure}-${index}`}
+                          type="button"
+                          onClick={() => {
+                            setFormFields({
+                              indication: t.diagnosis,
+                              procedure: t.procedure
+                            });
+                            setActiveSuggestionField(null);
+                          }}
+                          className="w-full text-left px-4 py-3 hover:bg-zinc-50 border-b border-zinc-100 last:border-none transition-colors duration-150"
+                        >
+                          <div className="text-[11px] font-black text-zinc-700 leading-tight mb-0.5">{t.procedure}</div>
+                          <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">{t.diagnosis}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                </div>
-               <div>
+               <div className="relative">
                   <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">CIRURGIA</label>
                   <input 
                     name="procedure" 
-                    list="procedures-list"
                     type="text" 
                     value={formFields.procedure}
                     onChange={(e) => setFormFields(prev => ({ ...prev, procedure: e.target.value }))}
+                    onFocus={() => setActiveSuggestionField('procedure')}
+                    onBlur={() => setTimeout(() => setActiveSuggestionField(null), 250)}
                     autoComplete="off"
                     className="w-full p-3 text-xs font-bold border rounded-2xl" 
                     placeholder="Procedimento"
                   />
-                  <datalist id="procedures-list">
-                    {existingProcedures.map(p => <option key={p} value={p}>{p}</option>)}
-                  </datalist>
+                  {activeSuggestionField === 'procedure' && filteredTemplates.length > 0 && (
+                    <div className="absolute z-[9999] left-0 right-0 mt-1 bg-white border border-zinc-200/80 rounded-2xl shadow-xl max-h-48 overflow-y-auto overflow-x-hidden backdrop-blur-md">
+                      {filteredTemplates.map((t, index) => (
+                        <button
+                          key={`${t.id || ''}-${t.diagnosis}-${t.procedure}-${index}`}
+                          type="button"
+                          onClick={() => {
+                            setFormFields({
+                              indication: t.diagnosis,
+                              procedure: t.procedure
+                            });
+                            setActiveSuggestionField(null);
+                          }}
+                          className="w-full text-left px-4 py-3 hover:bg-zinc-50 border-b border-zinc-100 last:border-none transition-colors duration-150"
+                        >
+                          <div className="text-[11px] font-black text-zinc-700 leading-tight mb-0.5">{t.procedure}</div>
+                          <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">{t.diagnosis}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                </div>
             </div>
             <div className="grid grid-cols-2 gap-4">

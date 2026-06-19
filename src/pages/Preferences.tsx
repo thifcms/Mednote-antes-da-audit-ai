@@ -79,11 +79,11 @@ export function Preferences() {
     e.preventDefault();
     const storedPassword = data.appPassword || '1234';
     if (oldPassword !== storedPassword) {
-      alert('Senha atual incorreta');
+      toast.error('Senha atual incorreta');
       return;
     }
     if (newPassword !== confirmPassword) {
-      alert('Senhas não coincidem');
+      toast.error('Senhas não coincidem');
       return;
     }
     updateAppPassword(newPassword);
@@ -97,7 +97,7 @@ export function Preferences() {
 
   const handleDeleteAll = async () => {
     if (deletePassword !== 'APAGAR') {
-      alert('Senha incorreta!');
+      toast.error('Senha incorreta!');
       return;
     }
     setIsDeleting(true);
@@ -105,7 +105,7 @@ export function Preferences() {
     setIsDeleting(false);
     setShowDeleteConfirm(false);
     setDeletePassword('');
-    alert('Todos os dados foram apagados.');
+    toast.success('Todos os dados foram apagados.');
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {

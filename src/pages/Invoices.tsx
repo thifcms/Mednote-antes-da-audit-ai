@@ -103,7 +103,7 @@ export function Invoices() {
   const handleExcelExport = (type: 'all' | 'filtered') => {
     const list = type === 'all' ? data.invoices : filteredInvoices;
     if (list.length === 0) {
-      alert('Nenhum dado para exportar.');
+      toast.warning('Nenhum dado para exportar.');
       return;
     }
 

@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useApp } from '../store/AppContext';
 import { PageHeader } from '../components/PageHeader';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 import { 
   FileText, 
   Activity, 
@@ -133,7 +134,7 @@ export function Dashboard() {
       }
     } catch (error) {
       console.error(error);
-      alert("Erro ao processar o arquivo. Tente novamente.");
+      toast.error("Erro ao processar o arquivo. Tente novamente.");
     } finally {
       setIsExtracting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -155,8 +156,8 @@ export function Dashboard() {
       (existing.grossAmount || 0) === grossAmount
     );
 
-    if (isDuplicate && !window.confirm('Esta nota já parece estar cadastrada. Deseja salvar mesmo assim?')) {
-      return;
+    if (isDuplicate) {
+      toast.warning('Esta nota fiscal já constava nos registros. Adicionada duplicidade.');
     }
 
     addInvoice({
@@ -189,8 +190,8 @@ export function Dashboard() {
       (existing.procedure || '').toLowerCase().trim() === procedure.toLowerCase().trim()
     );
 
-    if (isDuplicate && !window.confirm('Esta cirurgia já parece estar cadastrada. Deseja salvar mesmo assim?')) {
-      return;
+    if (isDuplicate) {
+      toast.warning('Esta cirurgia já constava nos registros. Adicionada duplicidade.');
     }
 
     addSurgery({

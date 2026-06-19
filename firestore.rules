@@ -77,6 +77,13 @@ service cloud.firestore {
              (data.get('particularValue', 0) is number);
     }
 
+    function isValidSurgeryTemplate(data) {
+      return data.keys().hasAll(['diagnosis', 'procedure', 'userId', 'createdAt']) &&
+             data.diagnosis is string && data.diagnosis.size() <= 1000 &&
+             data.procedure is string && data.procedure.size() <= 1000 &&
+             data.userId == request.auth.uid;
+    }
+
     function isValidPayment(data) {
       return data.keys().hasAll(['date', 'amount', 'userId', 'createdAt']) &&
              data.date is string &&
@@ -133,6 +140,15 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isValidElectiveSurgery(incoming());
         allow update: if isOwner(userId) && isValidElectiveSurgery(incoming()) &&
                       incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /surgery_templates/{templateId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidSurgeryTemplate(incoming());
+        allow update: if isOwner(userId) && isValidSurgeryTemplate(incoming()) &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['diagnosis', 'procedure', 'userId', 'createdAt', 'id']);
         allow delete: if isOwner(userId);
       }
 

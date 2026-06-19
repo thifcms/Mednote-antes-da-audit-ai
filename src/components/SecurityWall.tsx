@@ -4,6 +4,7 @@ import { Lock, Eye, EyeOff, HelpCircle, ExternalLink } from 'lucide-react';
 import { Logo } from './Logo';
 import { useApp } from '../store/AppContext';
 import { SplashScreen } from './SplashScreen';
+import { toast } from 'sonner';
 
 export function SecurityWall({ children }: { children: React.ReactNode }) {
   const { user, data } = useApp();
@@ -160,7 +161,7 @@ export function SecurityWall({ children }: { children: React.ReactNode }) {
                     <button 
                       type="button"
                       onClick={() => {
-                         alert('Para instalar o app:\n\n1. Clique no menu do seu navegador Chrome ou Safari.\n2. Escolha "Adicionar à Tela Inicial" ou "Instalar Aplicativo".');
+                         toast.info('Para instalar o app o adicione à Tela Inicial ou no menu "Instalar Aplicativo" do seu Chrome ou Safari.');
                       }}
                       className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700 transition-colors flex items-center gap-1"
                     >

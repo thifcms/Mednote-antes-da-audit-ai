@@ -100,6 +100,14 @@ export type ElectiveSurgery = {
   aiSourceHash?: string;
 };
 
+export type SurgeryTemplate = {
+  id: string;
+  diagnosis: string;
+  procedure: string;
+  createdAt: string;
+  userId: string;
+};
+
 interface AppData {
   invoices: Invoice[];
   payers: PayerMapping[];
@@ -109,6 +117,7 @@ interface AppData {
   payments: Payment[];
   taxPercentage: number;
   appPassword?: string;
+  surgery_templates: SurgeryTemplate[];
 }
 
 const defaultData: AppData = {
@@ -120,6 +129,7 @@ const defaultData: AppData = {
   payments: [],
   taxPercentage: 0,
   appPassword: '1234',
+  surgery_templates: [],
 };
 
 enum OperationType {
@@ -173,6 +183,10 @@ interface AppContextType {
   addPayment: (payment: Omit<Payment, 'id' | 'createdAt' | 'userId'> & { id?: string }) => Promise<void>;
   updatePayment: (id: string, payment: Partial<Payment>) => Promise<void>;
   deletePayment: (id: string) => Promise<void>;
+
+  addSurgeryTemplate: (template: Omit<SurgeryTemplate, 'id' | 'createdAt' | 'userId'> & { id?: string }) => Promise<void>;
+  deleteSurgeryTemplate: (id: string) => Promise<void>;
+
   deleteSurgeries: (ids: string[]) => Promise<void>;
   deleteElectiveSurgeries: (ids: string[]) => Promise<void>;
   deleteHospitals: (ids: string[]) => Promise<void>;
@@ -219,7 +233,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return {
           ...defaultData,
           ...parsed,
-          electiveSurgeries: parsed.electiveSurgeries || []
+          electiveSurgeries: parsed.electiveSurgeries || [],
+          surgery_templates: parsed.surgery_templates || []
         };
       }
       return defaultData;
@@ -391,6 +406,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       { name: 'surgeries', key: 'surgeries' },
       { name: 'electiveSurgeries', key: 'electiveSurgeries' },
       { name: 'payments', key: 'payments' },
+      { name: 'surgery_templates', key: 'surgery_templates' },
     ];
 
     const unsubs = collections.map(col => 
@@ -625,6 +641,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addPayment = (payment: any) => addEntity('payments', payment);
   const updatePayment = (id: string, updates: any) => updateEntity('payments', id, updates);
   const deletePayment = (id: string) => deleteEntity('payments', id);
+
+  const addSurgeryTemplate = (template: any) => addEntity('surgery_templates', template);
+  const deleteSurgeryTemplate = (id: string) => deleteEntity('surgery_templates', id);
 
   const deleteMultiple = async (col: string, ids: string[]) => {
     if (!user || ids.length === 0) return;
@@ -1060,6 +1079,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         addPayment,
         updatePayment,
         deletePayment,
+        addSurgeryTemplate,
+        deleteSurgeryTemplate,
         deleteSurgeries,
         deleteElectiveSurgeries,
         deleteHospitals,

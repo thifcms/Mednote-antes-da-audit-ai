@@ -96,6 +96,18 @@
       },
       "required": ["date", "patientName", "userId"]
     },
+    "SurgeryTemplate": {
+      "title": "Surgery Template",
+      "description": "Preset diagnosis and surgical procedures for medical autocomplete",
+      "type": "object",
+      "properties": {
+        "diagnosis": { "type": "string" },
+        "procedure": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["diagnosis", "procedure", "userId"]
+    },
     "UserSettings": {
       "title": "User Settings",
       "description": "General settings for the user",
@@ -131,6 +143,10 @@
     "users/{userId}/electiveSurgeries": {
       "schema": "ElectiveSurgery",
       "description": "User's elective surgeries list"
+    },
+    "users/{userId}/surgery_templates": {
+      "schema": "SurgeryTemplate",
+      "description": "User's manual templates for autocomplete suggestions"
     },
     "users": {
         "schema": "UserSettings",
