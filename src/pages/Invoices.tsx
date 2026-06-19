@@ -535,15 +535,18 @@ export function Invoices() {
         emissionDayMonth, 
         noteNumber, 
         mappedPayerId,
-        originalPayerName: draftInvoice.originalPayerName || '---'
+        originalPayerName: draftInvoice.originalPayerName || '---',
+        aiSourceHash: draftInvoice.aiSourceHash || ''
       };
   
       if (draftInvoice.id) {
-        await updateInvoice(draftInvoice.id, invoiceData);
-        toast.success("Nota atualizada com sucesso!");
+         const existing = data.invoices?.find(inv => inv.id === draftInvoice.id);
+         invoiceData.aiSourceHash = draftInvoice.aiSourceHash || existing?.aiSourceHash || '';
+         await updateInvoice(draftInvoice.id, invoiceData);
+         toast.success("Nota atualizada com sucesso!");
       } else {
-        await addInvoice(invoiceData);
-        toast.success("Nota adicionada com sucesso!");
+         await addInvoice(invoiceData);
+         toast.success("Nota adicionada com sucesso!");
       }
       
       setDraftInvoice(null);
@@ -566,7 +569,8 @@ export function Invoices() {
       netAmount: invoice.netAmount,
       noteNumber: invoice.noteNumber,
       emissionDayMonth: invoice.emissionDayMonth,
-      description: invoice.description
+      description: invoice.description,
+      aiSourceHash: invoice.aiSourceHash || ''
     });
     setIsModalOpen(true);
   };

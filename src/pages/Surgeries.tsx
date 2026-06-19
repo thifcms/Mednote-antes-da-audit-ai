@@ -77,6 +77,20 @@ export function Surgeries() {
     indication: '',
     procedure: ''
   });
+
+  React.useEffect(() => {
+    if (draftSurgery) {
+      setFormFields({
+        indication: draftSurgery.indication || draftSurgery.procedure || '',
+        procedure: draftSurgery.procedure || ''
+      });
+    } else {
+      setFormFields({
+        indication: '',
+        procedure: ''
+      });
+    }
+  }, [draftSurgery]);
   
   const [previewSurgeries, setPreviewSurgeries] = useState<any[] | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -534,7 +548,20 @@ export function Surgeries() {
       setProcessingMessage(isPdf ? 'Processando documento...' : 'Otimizando imagem...');
       setIsModalOpen(true);
       const extracted = await extractSurgeryLabel(file);
-      setDraftSurgery(extracted);
+
+      // Try to find hospital by name if available
+      let hospitalId = '';
+      if (extracted && extracted.hospital && data.hospitals) {
+        const hName = extracted.hospital.toLowerCase();
+        const found = data.hospitals.find(h => h.name.toLowerCase().includes(hName) || hName.includes(h.name.toLowerCase()));
+        if (found) hospitalId = found.id;
+      }
+
+      setDraftSurgery({
+        ...extracted,
+        hospitalId,
+        date: (extracted && extracted.date) || new Date().toISOString().split('T')[0]
+      });
     } catch (err: any) {
       console.error(err);
       let msg = isPdf 
@@ -581,10 +608,40 @@ export function Surgeries() {
     }
 
     if (draftSurgery.id) {
-      updateSurgery(draftSurgery.id, { date, patientName, indication, insurance, attendance, procedure, company, feesPaid, receivedAmount, hospitalId, notes: '' });
+      const existing = data.surgeries?.find(s => s.id === draftSurgery.id);
+      updateSurgery(draftSurgery.id, { 
+        date, 
+        patientName, 
+        indication, 
+        insurance, 
+        attendance, 
+        procedure, 
+        company, 
+        feesPaid, 
+        receivedAmount, 
+        hospitalId, 
+        notes: '',
+        aiSourceHash: draftSurgery.aiSourceHash || existing?.aiSourceHash || ''
+      });
       toast.success("Cirurgia atualizada com sucesso!");
     } else {
-      addSurgery({ date, patientName, indication, insurance, attendance, procedure, company, feesPaid, receivedAmount, hospitalId, notes: '', isParticular: false, particularValue: 0, photos: [] });
+      addSurgery({ 
+        date, 
+        patientName, 
+        indication, 
+        insurance, 
+        attendance, 
+        procedure, 
+        company, 
+        feesPaid, 
+        receivedAmount, 
+        hospitalId, 
+        notes: '', 
+        isParticular: false, 
+        particularValue: 0, 
+        photos: [],
+        aiSourceHash: draftSurgery.aiSourceHash || ''
+      });
       toast.success("Cirurgia registrada com sucesso!");
     }
     setDraftSurgery(null);
@@ -1074,7 +1131,24 @@ export function Surgeries() {
             <p className="text-[10px] font-black uppercase tracking-[0.2em]">{processingMessage}</p>
           </div>
         ) : draftSurgery ? (
-          <form onSubmit={handleSaveDraft} className="space-y-6">
+          <form onSubmit={handleSaveDraft} className="space-y-6" key={draftSurgery.id || draftSurgery.patientName || 'new-draft'}>
+            {(!draftSurgery.patientName && !draftSurgery.attendance && !draftSurgery.insurance) ? (
+              <div className="p-3 bg-[#FCF8E3] border border-[#FBEED5] rounded-2xl flex items-start gap-2.5 text-[11px] text-[#C09853] leading-relaxed">
+                <span className="text-sm font-bold flex-shrink-0">⚠️</span>
+                <div>
+                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5">Leitura automática parcial ou indisponível</p>
+                  <p className="opacity-90">Não foi possível ler as informações legíveis por completo. Por favor, preencha ou complemente os campos manualmente abaixo.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-[#EAF7ED] border border-[#D5ECCF] rounded-2xl flex items-start gap-2.5 text-[11px] text-[#34A853] leading-relaxed">
+                <span className="text-sm font-bold flex-shrink-0">✨</span>
+                <div>
+                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5">Etiqueta Importada com IA</p>
+                  <p className="opacity-90">Alguns dados foram extraídos do documento. Revise as informações nos campos abaixo antes de salvar.</p>
+                </div>
+              </div>
+            )}
             <div>
                <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">PACIENTE</label>
                <input name="patientName" type="text" defaultValue={draftSurgery.patientName || ''} className="w-full p-3 text-xs font-bold border rounded-2xl placeholder:zinc-200" placeholder="Nome Completo" required />

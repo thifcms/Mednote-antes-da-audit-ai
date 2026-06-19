@@ -1,23 +1,76 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useApp, ElectiveSurgery } from '../store/AppContext';
 import { PageHeader } from '../components/PageHeader';
 import { Dialog } from '../components/ui/Dialog';
-import { Plus, Search, Check, Edit2, Trash2, Info } from 'lucide-react';
+import { Plus, Search, Check, Edit2, Trash2, Info, Camera, Loader2, ChevronRight } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn, formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
+import { extractSurgeryLabel } from '../services/ai';
 
 export function ElectiveSurgeries() {
   const { data, addElectiveSurgery, updateElectiveSurgery, deleteElectiveSurgery, addSurgery } = useApp();
   
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showChoiceDialog, setShowChoiceDialog] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState('Processando...');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [hospitalFilter, setHospitalFilter] = useState('ALL');
   const [draftSurgery, setDraftSurgery] = useState<any>(null);
   const [isFinishingSurgery, setIsFinishingSurgery] = useState(false);
   const [surgeryToDelete, setSurgeryToDelete] = useState<any>(null);
   const [surgeryToConfirmRealized, setSurgeryToConfirmRealized] = useState<any>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isPdf = file.type === 'application/pdf';
+
+    try {
+      setIsProcessing(true);
+      setProcessingMessage(isPdf ? 'Processando documento...' : 'Otimizando imagem...');
+      setErrorMessage(null);
+      setIsModalOpen(true);
+      setIsFinishingSurgery(false);
+      
+      const extracted = await extractSurgeryLabel(file);
+      
+      // Try to find hospital by name if available
+      let hospitalId = '';
+      if (extracted.hospital && data.hospitals) {
+        const hName = extracted.hospital.toLowerCase();
+        const found = data.hospitals.find(h => h.name.toLowerCase().includes(hName) || hName.includes(h.name.toLowerCase()));
+        if (found) hospitalId = found.id;
+      }
+
+      setDraftSurgery({
+        ...extracted,
+        hospitalId,
+        date: extracted.date || new Date().toISOString().split('T')[0]
+      });
+    } catch (err: any) {
+      console.error(err);
+      let msg = isPdf 
+        ? 'A extração do PDF falhou. Certifique-se de que o documento é legível.'
+        : 'A leitura falhou. Tente tirar uma foto mais aproximada e nítida da etiqueta.';
+      
+      if (err instanceof Error && err.message) {
+        msg = err.message;
+      }
+      
+      setErrorMessage(msg);
+      toast.error(msg);
+      setIsModalOpen(false);
+    } finally {
+      setIsProcessing(false);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const handleSaveDraft = (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,16 +105,34 @@ export function ElectiveSurgeries() {
          notes: '',
          isParticular,
          particularValue,
-         photos: []
+         photos: [],
+         aiSourceHash: draftSurgery.aiSourceHash || ''
        });
        if (draftSurgery.id) deleteElectiveSurgery(draftSurgery.id);
        toast.success("Cirurgia registrada e movida para Cirurgias Realizadas!");
     } else {
        if (draftSurgery.id) {
-         updateElectiveSurgery(draftSurgery.id, { date, patientName, procedure, hospitalId, isParticular, particularValue });
+         const existing = data.electiveSurgeries?.find(s => s.id === draftSurgery.id);
+         updateElectiveSurgery(draftSurgery.id, { 
+           date, 
+           patientName, 
+           procedure, 
+           hospitalId, 
+           isParticular, 
+           particularValue,
+           aiSourceHash: draftSurgery.aiSourceHash || existing?.aiSourceHash || ''
+         });
          toast.success("Procedimento atualizado!");
        } else {
-         addElectiveSurgery({ date, patientName, procedure, hospitalId, isParticular, particularValue });
+         addElectiveSurgery({ 
+           date, 
+           patientName, 
+           procedure, 
+           hospitalId, 
+           isParticular, 
+           particularValue,
+           aiSourceHash: draftSurgery.aiSourceHash || ''
+         });
          toast.success("Procedimento solicitado com sucesso!");
        }
     }
@@ -89,9 +160,17 @@ export function ElectiveSurgeries() {
         ]}
       >
         <div className="flex items-center flex-wrap gap-2">
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          <input 
+            type="file" 
+            accept="image/*,application/pdf" 
+            capture="environment" 
+            ref={fileInputRef} 
+            className="hidden" 
+            onChange={handleCapture} 
+          />
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
             <button 
-              onClick={() => { setSearchTerm(''); setIsModalOpen(true); setIsFinishingSurgery(false); setDraftSurgery({ date: new Date().toISOString().split('T')[0] }); }} 
+              onClick={() => setShowChoiceDialog(true)} 
               className="flex items-center gap-2 bg-[#162744] text-white px-5 md:px-6 py-2 rounded-xl text-[9px] font-black uppercase tracking-tight transition-all shadow-md hover:shadow-lg active:scale-95"
             >
               <span className="action-dot" />
@@ -224,9 +303,80 @@ export function ElectiveSurgeries() {
        </div>
       </main>
 
+      <Dialog 
+        isOpen={showChoiceDialog} 
+        onClose={() => setShowChoiceDialog(false)} 
+        title="Nova Eletiva"
+      >
+        <div className="grid grid-cols-1 gap-4 py-4">
+          <button
+            onClick={() => {
+              setShowChoiceDialog(false);
+              setSearchTerm('');
+              setIsModalOpen(true);
+              setIsFinishingSurgery(false);
+              setDraftSurgery({ date: new Date().toISOString().split('T')[0] });
+            }}
+            className="flex items-center justify-between p-5 border border-zinc-200 rounded-2xl hover:bg-zinc-50 transition-colors text-left"
+          >
+            <div className="flex gap-4 items-center">
+              <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center">
+                <Edit2 className="w-5 h-5 text-zinc-600" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-zinc-900">Preenchimento Manual</p>
+                <p className="text-[10px] text-zinc-400 font-bold">DIGITE OS DADOS CIRÚRGICOS</p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-zinc-300" />
+          </button>
+
+          <button
+            onClick={() => {
+              setShowChoiceDialog(false);
+              fileInputRef.current?.click();
+            }}
+            className="flex items-center justify-between p-5 border border-zinc-200 rounded-2xl hover:bg-zinc-50 transition-colors text-left"
+          >
+            <div className="flex gap-4 items-center">
+              <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                <Camera className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-900">Capturar Foto / Etiqueta</p>
+                <p className="text-[10px] text-zinc-400 font-bold">USA IA PARA COLETAR PACIENTE E HOSPITAL</p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-zinc-300" />
+          </button>
+        </div>
+      </Dialog>
+
       <Dialog isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setDraftSurgery(null); setIsFinishingSurgery(false); }} title={isFinishingSurgery ? "Cirurgia Realizada" : (draftSurgery?.id ? "Editar Eletiva" : "Nova Eletiva")}>
-         {draftSurgery && (
-          <form onSubmit={handleSaveDraft} className="space-y-6">
+         {isProcessing ? (
+           <div className="py-20 text-center space-y-4">
+              <Loader2 className="w-10 h-10 animate-spin mx-auto text-zinc-900" />
+              <p className="text-[10px] font-black uppercase tracking-[0.2em]">{processingMessage}</p>
+           </div>
+         ) : draftSurgery && (
+          <form onSubmit={handleSaveDraft} className="space-y-6" key={draftSurgery?.id || draftSurgery?.patientName || 'new-elective-draft'}>
+            {(!draftSurgery.patientName && !draftSurgery.attendance && !draftSurgery.insurance) ? (
+              <div className="p-3 bg-[#FCF8E3] border border-[#FBEED5] rounded-2xl flex items-start gap-2.5 text-[11px] text-[#C09853] leading-relaxed mb-1">
+                <span className="text-sm font-bold flex-shrink-0">⚠️</span>
+                <div>
+                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5">Leitura automática parcial ou indisponível</p>
+                  <p className="opacity-90">Não foi possível ler as informações legíveis por completo. Por favor, preencha ou complemente os campos manualmente abaixo.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-[#EAF7ED] border border-[#D5ECCF] rounded-2xl flex items-start gap-2.5 text-[11px] text-[#34A853] leading-relaxed mb-1">
+                <span className="text-sm font-bold flex-shrink-0">✨</span>
+                <div>
+                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5">Eletiva Importada com IA</p>
+                  <p className="opacity-90">Alguns dados foram extraídos do documento. Revise as informações nos campos abaixo antes de salvar.</p>
+                </div>
+              </div>
+            )}
             {!isFinishingSurgery && (
               <div className="bg-zinc-50 p-4 rounded-xl mb-4 border border-zinc-100 flex gap-3 text-xs text-zinc-500">
                 <Info className="w-4 h-4 text-[#162744] flex-shrink-0" />

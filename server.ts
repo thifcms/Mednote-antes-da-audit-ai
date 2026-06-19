@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
 import "dotenv/config";
 import multer from "multer";
 import FormData from "form-data";
@@ -205,87 +204,6 @@ async function startServer() {
 
   // Set higher limit for large PDF base64 payloads
   app.use(express.json({ limit: '50mb' }));
-
-  // API Routes
-  app.post("/api/gemini/extract", async (req, res) => {
-    try {
-      const { fileType, base64Data, prompt, schema } = req.body;
-      
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(400).json({ error: "Chave de API Gemini n\u00e3o configurada. Configure no painel de segredos." });
-      }
-
-      const ai = new GoogleGenAI({ 
-        apiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-      });
-      
-      const modelsToTry = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview'];
-      let response: any = null;
-      let lastError: any = null;
-
-      for (const model of modelsToTry) {
-        try {
-          response = await ai.models.generateContent({
-            model,
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  { text: prompt },
-                  {
-                    inlineData: {
-                      data: base64Data,
-                      mimeType: fileType,
-                    },
-                  },
-                ],
-              },
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: schema,
-              temperature: 0.1,
-            },
-          });
-          break; // Sucesso, não precisa tentar outro modelo
-        } catch (error: any) {
-          console.warn(`Erro com o modelo ${model}:`, error.message);
-          lastError = error;
-          
-          const errorMsg = error.message?.toLowerCase() || '';
-          const isRetryable = errorMsg.includes('429') || 
-                             errorMsg.includes('quota') || 
-                             errorMsg.includes('resource_exhausted') ||
-                             errorMsg.includes('503') ||
-                             errorMsg.includes('unavailable') ||
-                             errorMsg.includes('demand') ||
-                             errorMsg.includes('404') ||
-                             errorMsg.includes('not found') ||
-                             errorMsg.includes('not supported');
-
-          if (!isRetryable) {
-            throw error; // Se o erro não for de limite, indisponibilidade ou modelo não encontrado, para aqui
-          }
-        }
-      }
-
-      if (!response && lastError) {
-        throw lastError;
-      }
-
-      if (!response.text) {
-        throw new Error("N\u00e3o foi poss\u00edvel extrair dados da imagem/documento.");
-      }
-
-      const result = JSON.parse(response.text);
-      res.json(result);
-    } catch (error: any) {
-      console.error('Gemini error:', error);
-      res.status(500).json({ error: error.message || 'Erro ao processar documento.' });
-    }
-  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

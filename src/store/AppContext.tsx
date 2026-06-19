@@ -41,6 +41,7 @@ export type Invoice = {
   netAmount: number;
   createdAt: string;
   userId: string;
+  aiSourceHash?: string;
 };
 
 export type Payment = {
@@ -83,6 +84,7 @@ export type Surgery = {
   photos?: string[];
   createdAt: string;
   userId: string;
+  aiSourceHash?: string;
 };
 
 export type ElectiveSurgery = {
@@ -95,6 +97,7 @@ export type ElectiveSurgery = {
   particularValue?: number;
   createdAt: string;
   userId: string;
+  aiSourceHash?: string;
 };
 
 interface AppData {
@@ -527,6 +530,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateEntity = async (col: string, id: string, updates: any) => {
     if (!user) return;
+
+    // Detect if manual edit changed any originally extracted fields for Audit AI feedback loop
+    try {
+      const list = (data as any)[col] || [];
+      const existingRecord = list.find((x: any) => x.id === id);
+      if (existingRecord && existingRecord.aiSourceHash) {
+        let hasChanged = false;
+        const fieldsToTrack: { [key: string]: string[] } = {
+          surgeries: ['patientName', 'attendance', 'insurance', 'hospitalId', 'feesPaid', 'receivedAmount', 'procedure', 'company', 'date'],
+          electiveSurgeries: ['patientName', 'hospitalId', 'procedure', 'particularValue', 'date'],
+          invoices: ['date', 'originalPayerName', 'amount', 'netAmount', 'noteNumber', 'cnpj', 'description']
+        };
+
+        const track = fieldsToTrack[col];
+        if (track) {
+          for (const field of track) {
+            if (updates[field] !== undefined && String(updates[field]) !== String(existingRecord[field] || '')) {
+              hasChanged = true;
+              break;
+            }
+          }
+        }
+
+        if (hasChanged) {
+          fetch('https://audit-ai-6wed.onrender.com/api/learned-examples/mark-corrected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_hash: existingRecord.aiSourceHash })
+          }).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao verificar correções para Audit AI:', e);
+    }
 
     // Atualiza o estado da UI de forma síncrona/instantânea
     setData(prev => {
