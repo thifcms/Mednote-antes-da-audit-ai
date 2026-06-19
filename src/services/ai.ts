@@ -441,7 +441,10 @@ function mapAuditAiResponse(responseData: any) {
   if (isInvoice) {
     const emitente = findField(responseData, ['emitente', 'razaoSocial', 'prestador', 'nomeEmitente']) || '';
     const valorTotal = parseFloat(findField(responseData, ['valorTotal', 'valorBruto', 'valor_total']) || '0');
-    const dataEmissao = findField(responseData, ['dataEmissao', 'data_emissao', 'dataEmis', 'data']) || '';
+    const dataEmissao = findField(responseData, ['dataEmissao', 'data_emissao', 'dataEmis', 'data', 'dtEmissao', 'dt_emissao', 'dataNota', 'data_nota', 'competencia']) || '';
+    const valorLiquidoRaw = findField(responseData, ['valorLiquido', 'valor_liquido', 'valorLiq', 'liquido', 'netAmount', 'valor_liquido_servicos', 'vlLiquido']);
+    const valorLiquido = valorLiquidoRaw ? parseFloat(valorLiquidoRaw) : 0;
+    const netAmount = (valorLiquido && valorLiquido > 0) ? valorLiquido : valorTotal;
     const numeroNota = findField(responseData, ['numeroNota', 'numero_nota', 'numNota', 'nota']) || '';
     const cnpjEmitente = findField(responseData, ['cnpjEmitente', 'cnpj_emitente', 'cnpj']) || '';
     
@@ -457,7 +460,7 @@ function mapAuditAiResponse(responseData: any) {
       date: convertDateToISO(dataEmissao),
       originalPayerName: emitente,
       amount: valorTotal,
-      netAmount: valorTotal,
+      netAmount: netAmount,
       noteNumber: String(numeroNota),
       cnpj: String(cnpjEmitente),
       description: itensDesc,
