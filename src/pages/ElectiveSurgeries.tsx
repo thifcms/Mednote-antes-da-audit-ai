@@ -40,7 +40,7 @@ export function ElectiveSurgeries() {
       
       const extracted = await extractSurgeryLabel(file);
       
-      if (extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
+      if (extracted?._quotaExhausted || extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
         toast.warning(
           '⚠️ Usando processamento pago — cota gratuita esgotada hoje. Renova à meia-noite (horário de Brasília).',
           { duration: 8000 }

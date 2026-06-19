@@ -139,7 +139,7 @@ export function Invoices() {
       setIsModalOpen(true);
       const extracted = await extractInvoiceDetails(file);
 
-      if (extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
+      if (extracted?._quotaExhausted || extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
         toast.warning(
           '⚠️ Usando processamento pago — cota gratuita esgotada hoje. Renova à meia-noite (horário de Brasília).',
           { duration: 8000 }

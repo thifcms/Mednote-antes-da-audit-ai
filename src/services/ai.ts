@@ -569,6 +569,7 @@ export async function processImage(file: File, prompt: string, schema?: any) {
       mapped = mapAuditAiResponse(responseData);
       if (mapped) {
         mapped._usedModel = responseData?.usedModel || '';
+        mapped._quotaExhausted = responseData?.quotaExhausted || false;
       }
     } catch (e) {
       console.warn("⚠️ Falha ao mapear resposta da IA:", e);
@@ -682,7 +683,8 @@ Extraia as seguintes informações no formato JSON plano especificado:
         hospital: res.hospital || '',
         company: res.company || '',
         aiSourceHash: res.aiSourceHash || '',
-        _usedModel: res._usedModel || ''
+        _usedModel: res._usedModel || '',
+        _quotaExhausted: res._quotaExhausted || false
       };
     };
 
