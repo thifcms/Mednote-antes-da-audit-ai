@@ -514,8 +514,8 @@ export async function processImage(file: File, prompt: string, schema?: any) {
     if (file.type === 'application/pdf' && file.size > 5 * 1024 * 1024) {
       throw new Error("O PDF é muito grande (máx. 5MB) ou você atingiu o limite de uso. Tire um Print (foto) da nota e envie como imagem para gastar menos leitura da IA, ou aguarde 1 minuto.");
     }
-    if (isHeic && file.size > 10 * 1024 * 1024) {
-      throw new Error("A imagem é muito grande (máx. 10MB). Reduza a resolução na câmera e tente novamente.");
+    if (isHeic && file.size > 3 * 1024 * 1024) {
+      throw new Error("O arquivo de imagem HEIC é muito grande (maior que 3MB). Para evitar lentidão e garantir o processamento rápido, por favor envie uma foto menor ou tire a foto diretamente em formato JPEG/PNG nas configurações da câmera do seu aparelho.");
     }
 
     // For PDFs and HEIC, we send directly without resizing (canvas doesn't support HEIC rendering, but AI supports natively)
@@ -539,6 +539,14 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   let responseData: any = null;
   let responseOk = false;
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+    console.warn("⚠️ Chamada para Audit AI foi cancelada por estourar o limite de tempo inteligente de 40 segundos.");
+  }, 40000);
+
+  const startTimeNetwork = performance.now();
+
   // 1. TENTA PRIMEIRO O SERVIDOR DE PRODUÇÃO DA AUDIT AI (Primeira e única opção de IA)
   try {
     console.log("Iniciando extração via API de Produção da Audit AI...");
@@ -548,6 +556,7 @@ export async function processImage(file: File, prompt: string, schema?: any) {
         'Content-Type': 'application/json',
         'x-api-key': (import.meta as any).env.VITE_AUDIT_AI_KEY || 'auditai_key_2026_medico'
       },
+      signal: controller.signal,
       body: JSON.stringify({
         fileBase64: base64Data,
         filename: file.name || 'documento.jpg',
@@ -556,6 +565,11 @@ export async function processImage(file: File, prompt: string, schema?: any) {
         schema,
       })
     });
+
+    clearTimeout(timeoutId);
+    const endTimeNetwork = performance.now();
+    const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
+    console.log(`⏱️ Tempo de rede [Audit AI]: ${networkDuration}s`);
 
     if (productionResponse.ok) {
       const prodData = await productionResponse.json();
@@ -575,7 +589,15 @@ export async function processImage(file: File, prompt: string, schema?: any) {
       console.warn(`⚠️ API de Produção falhou com status ${productionResponse.status}.`);
     }
   } catch (prodErr: any) {
-    console.error("❌ Falha na chamando API de Produção da Audit AI:", prodErr.message);
+    clearTimeout(timeoutId);
+    const endTimeNetwork = performance.now();
+    const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
+    console.log(`⏱️ Tempo de rede [Audit AI - Falha/Timeout]: ${networkDuration}s`);
+    if (prodErr.name === 'AbortError') {
+      console.warn("❌ Erro: Tempo limite de 40 segundos atingido na conexão com a Audit AI.");
+    } else {
+      console.error("❌ Falha chamando API de Produção da Audit AI:", prodErr.message);
+    }
   }
 
   let mapped: any = null;
@@ -608,15 +630,23 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   }
 
   if (isMappedEmpty) {
+    const startTimeOCR = performance.now();
     console.warn("⚠️ Extração por IA (Audit AI) indisponível ou vazia. Ativando OCR Tesseract Local com heurísticas...");
     try {
       const ocrResult = await Tesseract.recognize(file, 'por+eng');
+      const endTimeOCR = performance.now();
+      const ocrDuration = ((endTimeOCR - startTimeOCR) / 1000).toFixed(2);
+      console.log(`⏱️ Tempo de processamento local [Tesseract fallback]: ${ocrDuration}s`);
+
       const text = ocrResult?.data?.text || '';
       console.log("TEXTO EXTRAÍDO PELO TESSERACT LOCAL:\n", text);
       const heuristicResult = parseTextWithHeuristics(text, isSurgery);
       console.log("RESULTADO DA ANÁLISE HEURÍSTICA LOCAL:", JSON.stringify(heuristicResult));
       return heuristicResult;
     } catch (ocrErr: any) {
+      const endTimeOCR = performance.now();
+      const ocrDuration = ((endTimeOCR - startTimeOCR) / 1000).toFixed(2);
+      console.log(`⏱️ Tempo de processamento local [Tesseract - Falhado]: ${ocrDuration}s`);
       console.error("❌ Falha crítica no OCR Tesseract Local:", ocrErr.message);
     }
   }

@@ -704,9 +704,12 @@ export function Surgeries() {
       return matchesSearch && isDateInRange;
     })
     .sort((a, b) => {
-      const timeB = b.date ? new Date(b.date).getTime() : 0;
-      const timeA = a.date ? new Date(a.date).getTime() : 0;
-      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+      const dateA = parseFlexibleDate(a.date);
+      const dateB = parseFlexibleDate(b.date);
+      if (!dateA && !dateB) return 0;
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateB.localeCompare(dateA);
     }), [data.surgeries, data.hospitals, activeHospitalId, searchTerm, filterType, startDate, endDate]);
 
   const indicationsForAutocomplete = React.useMemo(() => {
@@ -1570,9 +1573,12 @@ export function Surgeries() {
                   </thead>
                   <tbody className="divide-y divide-zinc-50">
                      {[...data.surgeries].sort((a,b) => {
-                        const timeA = a.date ? new Date(a.date).getTime() : 0;
-                        const timeB = b.date ? new Date(b.date).getTime() : 0;
-                        return timeB - timeA;
+                        const dateA = parseFlexibleDate(a.date);
+                        const dateB = parseFlexibleDate(b.date);
+                        if (!dateA && !dateB) return 0;
+                        if (!dateA) return 1;
+                        if (!dateB) return -1;
+                        return dateB.localeCompare(dateA);
                      }).map(s => (
                         <tr key={s.id} className="hover:bg-zinc-50/50 transition-colors">
                            <td className="px-4 py-2">
