@@ -5,6 +5,15 @@ import { Dialog } from '../components/ui/Dialog';
 import { extractInvoiceDetails, extractSurgeryLabel } from '../services/ai';
 import { Plus, FileText, Search, Loader2, Download, FileSpreadsheet, X, Check, ClipboardCopy, Info, Camera, UploadCloud, Edit2, Trash2 } from 'lucide-react';
 import { formatCurrency, cn, findExcelHeaderRow, safeFormat, normalizeName, parseFlexibleDate, parseFinancialAmount } from '../lib/utils';
+import { 
+  INVOICE_FIELDS, 
+  getHeadersPattern, 
+  suggestAutoMapping, 
+  loadMappingFromLocal, 
+  saveMappingToLocal, 
+  loadMappingFromCloud, 
+  saveMappingToCloud 
+} from '../services/excelMapping';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import Papa from 'papaparse';
@@ -13,8 +22,16 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 
 export function Invoices() {
-  const { data, addInvoice, addPayer, addPayment, deleteInvoice, deleteInvoices, updateInvoice, deleteAllInvoices } = useApp();
+  const { user, data, addInvoice, addPayer, addPayment, deleteInvoice, deleteInvoices, updateInvoice, deleteAllInvoices } = useApp();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Estados para Calibração de Excel
+  const [isCalibrationOpen, setIsCalibrationOpen] = useState(false);
+  const [calibrationHeaders, setCalibrationHeaders] = useState<string[]>([]);
+  const [calibrationMapping, setCalibrationMapping] = useState<Record<string, string>>({});
+  const [calibrationPattern, setCalibrationPattern] = useState('');
+  const [calibrationFileRows, setCalibrationFileRows] = useState<any[]>([]);
+  
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMessage, setProcessingMessage] = useState<string>('Processando...');
   const [searchTerm, setSearchTerm] = useState('');
@@ -216,6 +233,178 @@ export function Invoices() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleSaveCalibration = async () => {
+    const missingFields = INVOICE_FIELDS.filter(f => f.required && !calibrationMapping[f.key]);
+    if (missingFields.length > 0) {
+      toast.error(`Associe colunas para os campos obrigatórios: ${missingFields.map(f => f.label).join(', ')}`);
+      return;
+    }
+
+    saveMappingToLocal(calibrationPattern, calibrationMapping);
+    if (user?.uid) {
+      await saveMappingToCloud(user.uid, calibrationPattern, calibrationMapping, 'invoices');
+    }
+    setIsCalibrationOpen(false);
+    
+    processExcelWithOptions(calibrationMapping, calibrationFileRows);
+  };
+
+  const processImportedInvoicesWithNormalizedKeys = (rows: any[]) => {
+    const invoicesToImport: any[] = [];
+    const paymentsToImport: any[] = [];
+    const seenInvoiceKeys = new Set<string>();
+    const seenPaymentKeys = new Set<string>();
+    const currentYear = new Date().getFullYear();
+
+    let lastYear: any = null;
+    let lastMonth: any = null;
+
+    rows.forEach((row: any) => {
+      const dateRaw = row.date;
+      const originalPayerName = String(row.originalPayerName || '').trim();
+      const grossVal = row.grossAmount;
+      const netVal = row.netAmount;
+      const noteNumberRaw = row.noteNumber;
+      const noteNumber = noteNumberRaw !== undefined && noteNumberRaw !== null ? String(noteNumberRaw).trim() : '';
+      
+      const receiptDateRaw = row.paymentDate;
+      const receivedAmountVal = row.paymentAmount;
+      
+      let date = parseFlexibleDate(dateRaw, lastYear);
+      let receiptDate = parseFlexibleDate(receiptDateRaw, lastYear);
+
+      const isValidDate = (d: string) => d.match(/^\d{4}-\d{2}-\d{2}$/);
+      if (date && !isValidDate(date)) {
+        date = '';
+      }
+      if (receiptDate && !isValidDate(receiptDate)) {
+        receiptDate = '';
+      }
+
+      let yearVal = null;
+      let month = null;
+
+      if (date) {
+        try {
+          const parsed = parseISO(date);
+          if (!isNaN(parsed.getTime())) {
+            yearVal = parsed.getFullYear();
+            lastYear = yearVal;
+            month = parsed.getMonth() + 1;
+            lastMonth = month;
+          }
+        } catch (e) {}
+      }
+
+      let year = yearVal || lastYear;
+      if (!year && date) {
+        year = parseInt(date.substring(0, 4));
+      }
+
+      let grossAmount = parseFinancialAmount(grossVal);
+      let netAmount = parseFinancialAmount(netVal || grossVal);
+      const description = 'Importado via Planilha';
+
+      const hasInvoiceData = (noteNumber && noteNumber !== '' && noteNumber !== '0') || grossAmount > 0;
+      
+      if (hasInvoiceData) {
+        const invKey = `${date || ''}-${originalPayerName.toLowerCase().trim()}-${noteNumber}-${grossAmount}`;
+        if (!seenInvoiceKeys.has(invKey)) {
+          seenInvoiceKeys.add(invKey);
+          invoicesToImport.push({ 
+            date: date || (year && month ? `${year}-${month.toString().padStart(2, '0')}-01` : new Date().toISOString().split('T')[0]), 
+            originalPayerName: originalPayerName || '---', 
+            grossAmount, 
+            netAmount, 
+            description, 
+            noteNumber: (noteNumber === 'undefined' || noteNumber === '0') ? '' : noteNumber, 
+            year: year || currentYear, 
+            month: month || (new Date().getMonth() + 1), 
+            emissionDayMonth: (() => {
+              if (!date) return '';
+              const d = parseISO(date);
+              if (isNaN(d.getTime())) return '';
+              return format(d, 'dd/MM');
+            })(),
+            photos: []
+          });
+        }
+      }
+
+      let receivedAmountValClean = typeof receivedAmountVal === 'number' ? receivedAmountVal : parseFloat(String(receivedAmountVal || '0').replace('R$', '').replace(/\./g, '').replace(',', '.').trim());
+      if (isNaN(receivedAmountValClean)) receivedAmountValClean = 0;
+      if (receiptDate || receivedAmountValClean > 0) {
+        const payKey = `${receiptDate || ''}-${receivedAmountValClean}-${originalPayerName.toLowerCase().trim()}`;
+        if (!seenPaymentKeys.has(payKey)) {
+          seenPaymentKeys.add(payKey);
+          paymentsToImport.push({ 
+            date: receiptDate || date || new Date().toISOString().split('T')[0], 
+            amount: receivedAmountValClean || netAmount || grossAmount, 
+            description: `Recebimento: ${originalPayerName || 'Importado'}${noteNumber && noteNumber !== 'undefined' && noteNumber !== '0' ? ` - Nota ${noteNumber}` : ''}` 
+          });
+        }
+      }
+    });
+    return { invoices: invoicesToImport, payments: paymentsToImport };
+  };
+
+  const processExcelWithOptions = (mapping: Record<string, string>, sheetsData: any[]) => {
+    setIsImporting(true);
+    setImportMessage('Mapeando e processando faturamento...');
+    
+    try {
+      let allInvoices: any[] = [];
+      let allPayments: any[] = [];
+      
+      for (const sheet of sheetsData) {
+        const { sheetName, rows, headerIndex, headerRow } = sheet;
+        
+        const mappedData = rows.slice(headerIndex + 1).map(r => {
+          const obj: any = {};
+          
+          Object.entries(mapping).forEach(([systemKey, excelHeader]) => {
+            if (excelHeader) {
+              const headerIndexInRow = headerRow.indexOf(excelHeader);
+              if (headerIndexInRow !== -1) {
+                obj[systemKey] = r[headerIndexInRow] !== undefined ? r[headerIndexInRow] : '';
+              } else {
+                obj[systemKey] = '';
+              }
+            } else {
+              obj[systemKey] = '';
+            }
+          });
+          
+          obj['_SheetName'] = sheetName;
+          return obj;
+        }).filter(obj => {
+          const values = Object.entries(obj)
+            .filter(([key]) => key !== '_SheetName')
+            .map(([_, v]) => v);
+          return values.some(v => v !== '');
+        });
+        
+        if (mappedData.length > 0) {
+          const preview = processImportedInvoicesWithNormalizedKeys(mappedData);
+          allInvoices = [...allInvoices, ...preview.invoices];
+          allPayments = [...allPayments, ...preview.payments];
+        }
+      }
+      
+      if (allInvoices.length > 0 || allPayments.length > 0) {
+        setPreviewData({ invoices: allInvoices, payments: allPayments });
+        setIsPreviewOpen(true);
+      } else {
+        setErrorMessage('Nenhum dado de faturamento legível pôde ser extraído da planilha.');
+      }
+    } catch (err) {
+      console.error(err);
+      setErrorMessage('Erro ao processar as opções de mapeamento de faturamento.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -230,7 +419,7 @@ export function Invoices() {
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           const ab = evt.target?.result;
           if (!ab || (ab instanceof ArrayBuffer && ab.byteLength === 0)) {
@@ -239,68 +428,81 @@ export function Invoices() {
             return;
           }
 
-          setImportMessage('Analizando planilha...');
+          setImportMessage('Analisando planilhas...');
           const wb = XLSX.read(ab, { type: 'array', cellDates: true, cellNF: false, cellText: false });
-          let allMappedData: any[] = [];
+          
+          let firstSheetHeaders: string[] = [];
+          const excelSheetsData: any[] = [];
+          
           for (const sheetName of wb.SheetNames) {
             const ws = wb.Sheets[sheetName];
-            // Get as array of arrays to find the header row
             const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+            if (rows.length === 0) continue;
             
-            if (rows.length > 0) {
-              const { headerIndex, headerRow } = findExcelHeaderRow(rows, [
-                'Ano', 'Mês', 'Mes', 'Nº Nota', 'NÚMERO DA NOTA', 'Nota', 'Emissão', 'EMITIDA EM', 'Emissao', 'emitida em', 'emitida', 'emitida data', 'data da emissao', 'Bruto', 'VALOR BRUTO', 'Líquido', 'VALOR LIQUIDO', 'Liquido', 'Valor', 'VALORES RECEBIDOS', 'DATA DO RECEBIMENTO'
-              ]);
-              console.log('Detected header row:', headerRow);
-              
-              // Map the rest of the rows based on the found header
-              // IMPROVEMENT: If a header cell is empty, check the first data row for a name
-              const firstDataRow = rows[headerIndex + 1];
-              const finalHeaderRow = headerRow.map((h, i) => {
-                if (!h && firstDataRow && firstDataRow[i]) {
-                  const potentialHeader = String(firstDataRow[i]).trim();
-                  // Only use it as header if it looks like one of our keywords
-                  const keywords = ['Ano', 'Mês', 'Nº Nota', 'Emissão', 'Bruto', 'Líquido', 'Valor'];
-                  if (keywords.some(k => potentialHeader.toLowerCase().includes(k.toLowerCase()))) {
-                    return potentialHeader;
-                  }
-                }
-                return h;
-              });
-
-              const mappedData = rows.slice(headerIndex + 1).map(r => {
-                const obj: any = {};
-                finalHeaderRow.forEach((h, i) => {
-                  if (h) obj[h] = r[i] !== undefined ? r[i] : '';
-                });
-                obj['_SheetName'] = sheetName;
-                return obj;
-              }).map(obj => obj);
-
-               if (mappedData.length > 0) {
-                allMappedData = [...allMappedData, ...mappedData];
-              }
+            const { headerIndex, headerRow } = findExcelHeaderRow(rows, [
+              'Ano', 'Mês', 'Mes', 'Nº Nota', 'NÚMERO DA NOTA', 'Nota', 'Emissão', 'EMITIDA EM', 'Emissao', 'emitida em', 'emitida', 'emitida data', 'data da emissao', 'Bruto', 'VALOR BRUTO', 'Líquido', 'VALOR LIQUIDO', 'Liquido', 'Valor', 'VALORES RECEBIDOS', 'DATA DO RECEBIMENTO'
+            ]);
+            
+            excelSheetsData.push({
+              sheetName,
+              rows,
+              headerIndex,
+              headerRow
+            });
+            
+            if (firstSheetHeaders.length === 0 && headerRow.length > 0) {
+              firstSheetHeaders = headerRow;
             }
           }
-          
-          if (allMappedData.length === 0) {
-            setErrorMessage('Nenhum dado encontrado nas abas desta planilha. Verifique se a planilha não está vazia ou se os dados estão nas abas.');
+
+          if (firstSheetHeaders.length === 0) {
+            setErrorMessage('Não foi possível identificar cabeçalhos nesta planilha de faturamento.');
             setIsImporting(false);
             return;
           }
+
+          const pattern = getHeadersPattern(firstSheetHeaders);
+          setCalibrationPattern(pattern);
+          setCalibrationHeaders(firstSheetHeaders.filter(Boolean));
+          setCalibrationFileRows(excelSheetsData);
+
+          // 1. Tentar ler do LocalStorage
+          let activeMapping = loadMappingFromLocal(pattern);
           
-          setImportMessage(`Processando ${allMappedData.length} registros...`);
-          const preview = processImportedData(allMappedData);
-          if (preview && (preview.invoices.length > 0 || preview.payments.length > 0)) {
-            setPreviewData(preview);
-            setIsPreviewOpen(true);
-          } else {
-            setErrorMessage('A planilha foi lida, mas nenhuma coluna mapeável foi encontrada. Certifique-se de que a planilha contenha colunas como "Data", "Valor", "Fonte Pagadora", etc.');
+          // 2. Tentar ler do Firestore
+          if (!activeMapping && user?.uid) {
+            activeMapping = await loadMappingFromCloud(user.uid, pattern);
+            if (activeMapping) {
+              saveMappingToLocal(pattern, activeMapping);
+            }
           }
-          setIsImporting(false);
+          
+          // 3. Tentar auto-sugestão fuzzy
+          let needsCalibration = false;
+          if (!activeMapping) {
+            const auto = suggestAutoMapping(firstSheetHeaders, INVOICE_FIELDS);
+            activeMapping = auto.mapping;
+            if (!auto.confidence) {
+              needsCalibration = true;
+            } else {
+              saveMappingToLocal(pattern, activeMapping);
+              if (user?.uid) {
+                saveMappingToCloud(user.uid, pattern, activeMapping, 'invoices');
+              }
+            }
+          }
+
+          if (needsCalibration) {
+            setCalibrationMapping(activeMapping || {});
+            setIsCalibrationOpen(true);
+            setIsImporting(false);
+          } else {
+            processExcelWithOptions(activeMapping, excelSheetsData);
+          }
+
         } catch (err) {
           console.error(err);
-          setErrorMessage('Erro ao ler o Excel. Certifique-se de que é um arquivo .xlsx válido e não está corrompido.');
+          setErrorMessage('Erro ao ler o Excel. Certifique-se de que é um arquivo .xlsx válido.');
           setIsImporting(false);
         }
       }, 100);
@@ -1028,6 +1230,78 @@ export function Invoices() {
             </button>
           </form>
         ) : null}
+      </Dialog>
+
+      <Dialog isOpen={isCalibrationOpen} onClose={() => setIsCalibrationOpen(false)} title="Mapeamento de Planilha" size="lg">
+        <div id="calibration-modal-invoices" className="p-6 space-y-6">
+          <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 flex gap-3">
+             <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+             <div className="space-y-1">
+                <h4 className="text-[11px] font-black uppercase tracking-wider text-amber-800">
+                   Calibração de Planilha Necessária
+                </h4>
+                <p className="text-[11px] text-amber-700/80 font-bold leading-relaxed">
+                   Detectamos novas colunas nesta planilha de faturamento. Associe os dados da sua planilha (esquerda) aos campos do faturamento de notas (direita) para importar com perfeição. O sistema salvará este mapeamento automaticamente!
+                </p>
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[400px] overflow-y-auto pr-2">
+            {INVOICE_FIELDS.map(field => {
+              const currentVal = calibrationMapping[field.key] || '';
+              return (
+                <div key={field.key} className="p-4 bg-zinc-50 rounded-xl border border-zinc-100 flex flex-col justify-between space-y-2">
+                  <div>
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest block">
+                      Campo do Sistema
+                    </span>
+                    <label className="text-[11px] font-black uppercase tracking-tight text-zinc-800 flex items-center gap-1.5 mt-0.5">
+                      {field.label}
+                      {field.required && (
+                        <span className="text-amber-600 font-bold text-[10px]" title="Obrigatório">*</span>
+                      )}
+                    </label>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                      Coluna da Planilha
+                    </span>
+                    <select
+                      className="w-full text-[11px] font-bold uppercase tracking-tight bg-white border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-zinc-900 transition-all cursor-pointer"
+                      value={currentVal}
+                      onChange={(e) => {
+                        setCalibrationMapping(prev => ({ ...prev, [field.key]: e.target.value }));
+                      }}
+                    >
+                      <option value="">-- Ignorar ou Não Encontrada --</option>
+                      {calibrationHeaders.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              id="btn-cancel-calibration-inv"
+              onClick={() => setIsCalibrationOpen(false)}
+              className="flex-1 text-[10px] font-black uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 py-3.5 rounded-2xl transition-all scale-press active:scale-95 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              id="btn-confirm-calibration-inv"
+              onClick={handleSaveCalibration}
+              className="flex-1 text-[10px] font-black uppercase tracking-wider text-white bg-zinc-900 hover:bg-zinc-800 py-3.5 rounded-2xl transition-all scale-press active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              Confirmar & Importar
+            </button>
+          </div>
+        </div>
       </Dialog>
 
       <Dialog isOpen={isImporting} onClose={() => setIsImporting(false)} title="Importando Dados">

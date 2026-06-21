@@ -303,7 +303,25 @@ async function resizeImage(file: File, maxSide: number = 1200): Promise<{ base64
         reject(new Error('Could not get canvas context'));
         return;
       }
+
+      let preprocessApplied = false;
+      const contrastFactorPercent = 20; // +20% contraste adicional (fator 1.20)
+
+      try {
+        if ('filter' in ctx) {
+          // Desativado temporariamente para isolar bug de pre-processamento visual relatado pelo medico
+          // ctx.filter = `grayscale(100%) contrast(${1 + (contrastFactorPercent / 100)})`;
+          preprocessApplied = false;
+        }
+      } catch (filterErr) {
+        console.warn('⚠️ Opcional: Filtro canvas de pré-processamento não suportado pelo navegador:', filterErr);
+      }
+
       ctx.drawImage(img, 0, 0, width, height);
+
+      if (preprocessApplied) {
+        console.log(`🎨 Pré-processamento visual aplicado: contraste +${contrastFactorPercent}%, escala de cinza`);
+      }
       
       // We use jpeg for medical labels/invoices as it's efficient for text-rich photos
       const base64 = canvas.toDataURL('image/jpeg', 0.85);
@@ -414,6 +432,11 @@ function findField(obj: any, keys: string[]): any {
   // 1. Procura no nível atual
   for (const key of keys) {
     if (key in obj && obj[key] !== undefined && obj[key] !== null && obj[key] !== '') {
+      // Evita retornar containers JSON (como a própria chave "data", "analysis", etc) que são objetos normais.
+      // Valores válidos de campos são apenas primitivos (string, number, boolean) ou objetos de data (Date).
+      if (typeof obj[key] === 'object' && !(obj[key] instanceof Date) && !Array.isArray(obj[key])) {
+        continue;
+      }
       return obj[key];
     }
   }
@@ -445,13 +468,17 @@ function findField(obj: any, keys: string[]): any {
   return undefined;
 }
 
-function mapAuditAiResponse(responseData: any) {
+function mapAuditAiResponse(responseData: any, isSurgery?: boolean) {
   if (!responseData) return null;
   const data = responseData?.data || responseData?.analysis || responseData;
   const hash = responseData?.image_hash || data?.image_hash || responseData?.data?.image_hash || '';
 
-  // Nota Fiscal: detecta pela presença de numeroNota ou valorTotal/emitente
-  const isInvoice = findField(responseData, ['numeroNota', 'valorTotal', 'emitente', 'cnpjEmitente']) !== undefined;
+  // Nota Fiscal: se o chamador passou isSurgery determinísticamente, usamos ele.
+  // Caso contrário, tenta inferir pela presença de campos típicos.
+  const isInvoice = isSurgery !== undefined 
+    ? !isSurgery 
+    : (findField(responseData, ['numeroNota', 'valorTotal', 'emitente', 'cnpjEmitente']) !== undefined);
+
   if (isInvoice) {
     const emitente = findField(responseData, ['emitente', 'razaoSocial', 'prestador', 'nomeEmitente']) || '';
     const valorTotalRaw = findField(responseData, ['valorTotal', 'valorBruto', 'valor_total']) || '0';
@@ -538,6 +565,8 @@ export async function processImage(file: File, prompt: string, schema?: any) {
 
   let responseData: any = null;
   let responseOk = false;
+  let httpStatusCode: number | string = 'N/A';
+  let httpStatusMsg: string = 'N/A';
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -546,6 +575,27 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   }, 40000);
 
   const startTimeNetwork = performance.now();
+
+  const metrics: any = {
+    timestamp: new Date().toLocaleTimeString('pt-BR'),
+    filename: file.name,
+    fileSize: `${(file.size / 1024).toFixed(1)} KB`,
+    networkDurationSec: '0.00',
+    httpStatus: 'N/A',
+    httpStatusText: 'N/A',
+    networkError: '',
+    rawResponseTruncated: '',
+    fallbackTriggered: false,
+    fallbackReason: '',
+    tesseractDurationSec: '',
+    tesseractTextLength: 0,
+    tesseractTextSample: '',
+    tesseractHeuristics: '',
+    usedModel: 'N/A',
+  };
+
+  // Inicializa global
+  (window as any).__lastExtractionMetrics = metrics;
 
   // 1. TENTA PRIMEIRO O SERVIDOR DE PRODUÇÃO DA AUDIT AI (Primeira e única opção de IA)
   try {
@@ -571,8 +621,16 @@ export async function processImage(file: File, prompt: string, schema?: any) {
     const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
     console.log(`⏱️ Tempo de rede [Audit AI]: ${networkDuration}s`);
 
+    httpStatusCode = productionResponse.status;
+    httpStatusMsg = productionResponse.statusText;
+    metrics.httpStatus = httpStatusCode;
+    metrics.httpStatusText = httpStatusMsg;
+    metrics.networkDurationSec = networkDuration;
+
     if (productionResponse.ok) {
       const prodData = await productionResponse.json();
+      metrics.rawResponseTruncated = JSON.stringify(prodData).substring(0, 1000);
+      metrics.usedModel = prodData?.usedModel || 'N/A';
       console.log('AUDIT AI RAW RESPONSE FROM PRODUCTION API:', JSON.stringify(prodData));
       
       const hasLlamaBypassed = prodData?.usedModel === 'llama-3.3-70b-versatile' || prodData?.usedProvider === 'groq';
@@ -581,55 +639,85 @@ export async function processImage(file: File, prompt: string, schema?: any) {
 
       if (hasLlamaBypassed && isProdContentEmpty) {
         console.warn("⚠️ API de Produção caiu em fallback Llama-Texto e retornou vazio. Ativando OCR local...");
+        metrics.fallbackTriggered = true;
+        metrics.fallbackReason = "O Llama Bypassed retornou um JSON vazio sem nome_paciente/patientName.";
       } else {
         responseData = prodData;
         responseOk = true;
       }
     } else {
       console.warn(`⚠️ API de Produção falhou com status ${productionResponse.status}.`);
+      metrics.fallbackTriggered = true;
+      metrics.fallbackReason = `HTTP não-OK: ${productionResponse.status} ${productionResponse.statusText}`;
+      try {
+        const errorBody = await productionResponse.text();
+        metrics.rawResponseTruncated = `Error Body: ${errorBody.substring(0, 500)}`;
+      } catch (errBodyEx) {
+        metrics.rawResponseTruncated = `Falhou ao ler o corpo do erro HTTP ${productionResponse.status}`;
+      }
     }
   } catch (prodErr: any) {
     clearTimeout(timeoutId);
     const endTimeNetwork = performance.now();
     const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
     console.log(`⏱️ Tempo de rede [Audit AI - Falha/Timeout]: ${networkDuration}s`);
+    
+    metrics.networkDurationSec = networkDuration;
+    metrics.fallbackTriggered = true;
+    
     if (prodErr.name === 'AbortError') {
       console.warn("❌ Erro: Tempo limite de 40 segundos atingido na conexão com a Audit AI.");
+      metrics.networkError = "Timeout (AbortError) - Estourou o limite de 40 segundos.";
+      metrics.fallbackReason = "Timeout inteligente de 40 segundos na rede.";
     } else {
       console.error("❌ Falha chamando API de Produção da Audit AI:", prodErr.message);
+      metrics.networkError = prodErr.stack || prodErr.message;
+      metrics.fallbackReason = `Exceção de Fetch de Rede: ${prodErr.message}`;
     }
   }
 
+  const isSurgery = schema?.properties?.patientName !== undefined;
   let mapped: any = null;
   if (responseOk && responseData) {
     try {
-      mapped = mapAuditAiResponse(responseData);
+      mapped = mapAuditAiResponse(responseData, isSurgery);
       if (mapped) {
         mapped._usedModel = responseData?.usedModel || '';
         mapped._quotaExhausted = responseData?.quotaExhausted || false;
+        
+        // LOGS TEMPORÁRIOS DE DIAGNÓSTICO DE MAPEAMENTO
+        console.log("=== DIAGNÓSTICO DE MAPEAMENTO (processImage) ===");
+        console.log("OBJETO MAPPED ANTES DE QUALQUER OUTRO PROCESSAMENTO:", JSON.stringify(mapped, null, 2));
+        metrics.mappedResult = JSON.stringify(mapped, null, 2);
       }
     } catch (e) {
       console.warn("⚠️ Falha ao mapear resposta da IA:", e);
     }
   }
 
-  const isSurgery = schema?.properties?.patientName !== undefined;
   let isMappedEmpty = false;
   if (!mapped) {
     isMappedEmpty = true;
   } else if (isSurgery) {
     isMappedEmpty = !mapped.patientName;
+    if (isMappedEmpty) {
+      metrics.fallbackReason = "Dados retornados pela Audit AI não continham o campo 'patientName' obrigatório.";
+    }
   } else {
-    // Para Notas Fiscais (Invoices), só ativa o fallback de OCR se NENHUM dos campos críticos foi extraído
+    // Para Notas Fiscais (Invoices), só altera o fallback de OCR se NENHUM dos campos críticos foi extraído
     const hasAmount = mapped.amount && parseFloat(String(mapped.amount)) > 0;
     const hasDate = mapped.date && mapped.date !== '1970-01-01' && mapped.date !== '';
     const hasNoteNumber = mapped.noteNumber && mapped.noteNumber.trim() !== '' && mapped.noteNumber !== 'undefined' && mapped.noteNumber !== 'null' && mapped.noteNumber !== '0001';
     const hasPayer = mapped.originalPayerName && mapped.originalPayerName.trim() !== '' && mapped.originalPayerName !== 'PACIENTE OU FONTE PAGADORA LOCAL';
     
     isMappedEmpty = !(hasAmount || hasDate || hasNoteNumber || hasPayer);
+    if (isMappedEmpty) {
+      metrics.fallbackReason = "Dados da Nota Fiscal retornados pela Audit AI não continham nenhum campo crítico (valor, data, número, emitente).";
+    }
   }
 
   if (isMappedEmpty) {
+    metrics.fallbackTriggered = true;
     const startTimeOCR = performance.now();
     console.warn("⚠️ Extração por IA (Audit AI) indisponível ou vazia. Ativando OCR Tesseract Local com heurísticas...");
     try {
@@ -640,22 +728,45 @@ export async function processImage(file: File, prompt: string, schema?: any) {
 
       const text = ocrResult?.data?.text || '';
       console.log("TEXTO EXTRAÍDO PELO TESSERACT LOCAL:\n", text);
+      
+      metrics.tesseractDurationSec = ocrDuration;
+      metrics.tesseractTextLength = text.length;
+      metrics.tesseractTextSample = text.substring(0, 400);
+
       const heuristicResult = parseTextWithHeuristics(text, isSurgery);
       console.log("RESULTADO DA ANÁLISE HEURÍSTICA LOCAL:", JSON.stringify(heuristicResult));
+      
+      metrics.tesseractHeuristics = JSON.stringify(heuristicResult);
+      
+      (window as any).__lastExtractionMetrics = metrics;
+      window.dispatchEvent(new CustomEvent('extractionMetricsUpdated'));
+
       return heuristicResult;
     } catch (ocrErr: any) {
       const endTimeOCR = performance.now();
       const ocrDuration = ((endTimeOCR - startTimeOCR) / 1000).toFixed(2);
       console.log(`⏱️ Tempo de processamento local [Tesseract - Falhado]: ${ocrDuration}s`);
       console.error("❌ Falha crítica no OCR Tesseract Local:", ocrErr.message);
+      
+      metrics.tesseractDurationSec = ocrDuration;
+      metrics.networkError += ` | Falha OCR Local: ${ocrErr.message}`;
+      
+      (window as any).__lastExtractionMetrics = metrics;
+      window.dispatchEvent(new CustomEvent('extractionMetricsUpdated'));
     }
   }
 
   if (!mapped) {
+    (window as any).__lastExtractionMetrics = metrics;
+    window.dispatchEvent(new CustomEvent('extractionMetricsUpdated'));
     throw new Error("Não foi possível realizar a extração automática. A imagem pode estar ilegível ou o servidor de IA e OCR local falharam.");
   }
 
   console.log('MAPPED RESULT:', JSON.stringify(mapped));
+  
+  (window as any).__lastExtractionMetrics = metrics;
+  window.dispatchEvent(new CustomEvent('extractionMetricsUpdated'));
+
   return mapped;
 }
 
@@ -746,23 +857,37 @@ ATENÇÃO: o campo insurance é obrigatório e quase sempre está presente. Não
         company: res.company || '',
         aiSourceHash: res.aiSourceHash || '',
         _usedModel: res._usedModel || '',
-        _quotaExhausted: res._quotaExhausted || false
+        _quotaExhausted: res._quotaExhausted || false,
+        isLocalOCR: res.isLocalOCR || false
       };
     };
 
+    let finalResult: any = null;
     if (analysis) {
       if (analysis.patientName || analysis.nome_paciente) {
-        return normalize(analysis);
+        finalResult = normalize(analysis);
+      } else if (analysis.etiquetas && analysis.etiquetas.length > 0) {
+        finalResult = normalize(analysis.etiquetas[0]);
+      } else if (analysis.analysis?.etiquetas && analysis.analysis.etiquetas.length > 0) {
+        finalResult = normalize(analysis.analysis.etiquetas[0]);
+      } else {
+        finalResult = normalize(analysis?.analysis || analysis);
       }
-      if (analysis.etiquetas && analysis.etiquetas.length > 0) {
-        return normalize(analysis.etiquetas[0]);
-      }
-      if (analysis.analysis?.etiquetas && analysis.analysis.etiquetas.length > 0) {
-        return normalize(analysis.analysis.etiquetas[0]);
-      }
+    } else {
+      finalResult = normalize(analysis?.analysis || analysis);
     }
-    
-    return normalize(analysis?.analysis || analysis);
+
+    // LOGS TEMPORÁRIOS DE DIAGNÓSTICO DE NORMALIZAÇÃO FINAL
+    console.log("=== DIAGNÓSTICO DE NORMALIZAÇÃO FINAL (extractSurgeryLabel) ===");
+    console.log("RESULTADO FINAL NORMALIZADO:", JSON.stringify(finalResult, null, 2));
+
+    if ((window as any).__lastExtractionMetrics) {
+      (window as any).__lastExtractionMetrics.normalizedResult = JSON.stringify(finalResult, null, 2);
+      // Dispara o evento de atualização para atualizar a UI do painel
+      window.dispatchEvent(new CustomEvent('extractionMetricsUpdated'));
+    }
+
+    return finalResult;
   } catch (err) {
     console.timeEnd('OCR_Surgery');
     throw err;

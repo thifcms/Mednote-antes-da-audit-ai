@@ -25,6 +25,7 @@ import {
   sendPasswordResetEmail
 } from 'firebase/auth';
 import { db, auth } from '../lib/firebase';
+import { dbLocal, loadAllLocalData, saveAllLocalData, migrateFromLocalStorageIfNeeded } from '../services/db';
 
 export type Invoice = {
   id: string;
@@ -108,7 +109,7 @@ export type SurgeryTemplate = {
   userId: string;
 };
 
-interface AppData {
+export interface AppData {
   invoices: Invoice[];
   payers: PayerMapping[];
   hospitals: Hospital[];
@@ -225,28 +226,35 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<AppData>(() => {
-    try {
-      const saved = localStorage.getItem('app_data');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          ...defaultData,
-          ...parsed,
-          electiveSurgeries: parsed.electiveSurgeries || [],
-          surgery_templates: parsed.surgery_templates || []
-        };
-      }
-      return defaultData;
-    } catch (e) {
-      console.error("Local storage corruption, resetting to default:", e);
-      return defaultData;
-    }
-  });
+  const [data, setData] = useState<AppData>(defaultData);
+  const [isDbInitialized, setIsDbInitialized] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Carga e migração de dados locais (localStorage -> Dexie IndexedDB)
+  useEffect(() => {
+    async function initLocalData() {
+      try {
+        const migratedData = await migrateFromLocalStorageIfNeeded(defaultData);
+        if (migratedData) {
+          setData(migratedData);
+          setIsDbInitialized(true);
+          return;
+        }
+
+        const localData = await loadAllLocalData(defaultData);
+        setData(localData);
+        setIsDbInitialized(true);
+      } catch (e) {
+        console.error("Erro na inicialização de IndexedDB ou migração local:", e);
+        setIsDbInitialized(true);
+      }
+    }
+
+    initLocalData();
+  }, []);
 
   // Fila de sincronização offline-first persistida localmente (Fila Resiliente)
   const [syncQueue, setSyncQueue] = useState<any[]>(() => {
@@ -289,8 +297,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [lastSynced]);
 
   useEffect(() => {
-    localStorage.setItem('app_data', JSON.stringify(data));
-  }, [data]);
+    if (isDbInitialized) {
+      saveAllLocalData(data);
+    }
+  }, [data, isDbInitialized]);
 
   useEffect(() => {
     const handleOnline = () => {

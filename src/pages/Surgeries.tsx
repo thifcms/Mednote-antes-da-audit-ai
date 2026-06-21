@@ -3,6 +3,15 @@ import { useApp } from '../store/AppContext';
 import { PageHeader } from '../components/PageHeader';
 import { Dialog } from '../components/ui/Dialog';
 import { extractSurgeryLabel } from '../services/ai';
+import { 
+  SURGERY_FIELDS, 
+  getHeadersPattern, 
+  suggestAutoMapping, 
+  loadMappingFromLocal, 
+  saveMappingToLocal, 
+  loadMappingFromCloud, 
+  saveMappingToCloud 
+} from '../services/excelMapping';
 import { Plus, Camera, Search, Loader2, Download, FileSpreadsheet, ChevronRight, ChevronLeft, ClipboardCopy, Info, X, Trash2, MessageCircle, Mail, Share2, Edit2, Image as ImageIcon, Maximize2, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -12,8 +21,15 @@ import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 
 export function Surgeries() {
-  const { data, addSurgery, updateSurgery, deleteSurgery, addHospital, deleteSurgeries, deleteAllSurgeries, addSurgeryTemplate } = useApp();
+  const { user, data, addSurgery, updateSurgery, deleteSurgery, addHospital, deleteSurgeries, deleteAllSurgeries, addSurgeryTemplate } = useApp();
   const [activeHospitalId, setActiveHospitalId] = useState<string | 'ALL'>('ALL');
+  
+  // Estados para Calibração de Excel
+  const [isCalibrationOpen, setIsCalibrationOpen] = useState(false);
+  const [calibrationHeaders, setCalibrationHeaders] = useState<string[]>([]);
+  const [calibrationMapping, setCalibrationMapping] = useState<Record<string, string>>({});
+  const [calibrationPattern, setCalibrationPattern] = useState('');
+  const [calibrationFileRows, setCalibrationFileRows] = useState<any[]>([]);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -72,6 +88,151 @@ export function Surgeries() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isViewPhotoModalOpen, isFullscreen, targetSurgeryIdForPhoto, data.surgeries]);
   
+  interface QueueItem {
+    id: string;
+    file: File;
+    status: 'waiting' | 'processing' | 'completed' | 'completed_low_confidence' | 'failed';
+    errorMessage?: string;
+    result?: any;
+    addedAt: Date;
+  }
+
+   const [queue, setQueue] = useState<QueueItem[]>([]);
+   const [currentItemIdInModal, setCurrentItemIdInModal] = useState<string | null>(null);
+   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+ 
+   const [lastMetrics, setLastMetrics] = useState<any>(() => {
+     return (window as any).__lastExtractionMetrics || null;
+   });
+ 
+   useEffect(() => {
+     const handleUpdate = () => {
+       setLastMetrics((window as any).__lastExtractionMetrics ? { ...(window as any).__lastExtractionMetrics } : null);
+     };
+     window.addEventListener('extractionMetricsUpdated', handleUpdate);
+     return () => window.removeEventListener('extractionMetricsUpdated', handleUpdate);
+   }, []);
+ 
+   useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      toast.info("Conexão reestabelecida. Retomando fila de processamento...");
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      toast.warning("Você está offline. Fila pausada até a conexão voltar.");
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const processQueueItem = async (itemId: string, file: File) => {
+    setQueue(prev => prev.map(item => item.id === itemId ? { ...item, status: 'processing' } : item));
+    
+    try {
+      const extracted = await extractSurgeryLabel(file);
+      
+      const isLowConfidence = !!(extracted as any)?.isLocalOCR;
+      const finalStatus = isLowConfidence ? 'completed_low_confidence' : 'completed';
+      
+      if ((extracted as any)?._quotaExhausted || (extracted as any)?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
+        toast.warning(
+          '⚠️ Usando processamento pago — cota gratuita esgotada hoje. Renova à meia-noite (horário de Brasília).',
+          { duration: 8000 }
+        );
+      }
+      
+      let hospitalId = '';
+      if (extracted && extracted.hospital && data.hospitals) {
+        const hName = extracted.hospital.toLowerCase();
+        const found = data.hospitals.find(h => 
+          h.name.toLowerCase().includes(hName) || hName.includes(h.name.toLowerCase())
+        );
+        if (found) hospitalId = found.id;
+      }
+      
+      const preparedData = {
+        ...extracted,
+        hospitalId,
+        date: (extracted && extracted.date) || new Date().toISOString().split('T')[0]
+      };
+      
+      setQueue(prev => prev.map(current => 
+        current.id === itemId 
+          ? { ...current, status: finalStatus, result: preparedData } 
+          : current
+      ));
+      
+      toast.success(`Leitura concluída para: ${extracted?.patientName || 'Etiqueta de Cirurgia'}`, {
+        description: isLowConfidence ? '⚠️ Baixa confiança (OCR Local, por favor revise)' : '✨ IA com sucesso'
+      });
+      
+    } catch (err: any) {
+      console.error("Erro no processamento da fila:", err);
+      let msg = 'A leitura falhou. Tente uma foto mais nítida.';
+      if (err instanceof Error && err.message) {
+        msg = err.message;
+      }
+      
+      setQueue(prev => prev.map(current => 
+        current.id === itemId 
+          ? { ...current, status: 'failed', errorMessage: msg } 
+          : current
+      ));
+      
+      toast.error(`Falha no processamento: ${msg}`);
+    }
+  };
+
+  useEffect(() => {
+    const nextItem = queue.find(item => item.status === 'waiting');
+    const isAnyProcessing = queue.some(item => item.status === 'processing');
+    
+    if (nextItem && !isAnyProcessing && isOnline) {
+      processQueueItem(nextItem.id, nextItem.file);
+    }
+  }, [queue, isOnline]);
+
+  const handleReviewQueueItem = (item: QueueItem) => {
+    if (!item.result) return;
+    setCurrentItemIdInModal(item.id);
+    setDraftSurgery({
+      ...item.result,
+      isLocalOCR: item.status === 'completed_low_confidence'
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    if (currentItemIdInModal) {
+      setQueue(prev => prev.filter(item => item.id !== currentItemIdInModal));
+    }
+    setIsModalOpen(false);
+    setDraftSurgery(null);
+    setCurrentItemIdInModal(null);
+  };
+
+  const completedItemIdsString = queue
+    .filter(item => item.status === 'completed' || item.status === 'completed_low_confidence')
+    .map(item => item.id)
+    .join(',');
+
+  useEffect(() => {
+    if (isModalOpen || !completedItemIdsString) return;
+    const completedIds = completedItemIdsString.split(',');
+    if (completedIds.length > 0 && completedIds[0]) {
+      const nextCompletedItem = queue.find(item => item.id === completedIds[0]);
+      if (nextCompletedItem) {
+        handleReviewQueueItem(nextCompletedItem);
+      }
+    }
+  }, [completedItemIdsString, isModalOpen]);
+
   const [draftSurgery, setDraftSurgery] = useState<any>(null);
   const [formFields, setFormFields] = useState({
     indication: '',
@@ -381,6 +542,153 @@ export function Surgeries() {
     setIsPreviewOpen(false);
   };
 
+  const handleSaveCalibration = async () => {
+    // Validação mínima: verificar se os campos obrigatórios têm coluna mapeada
+    const missingFields = SURGERY_FIELDS.filter(f => f.required && !calibrationMapping[f.key]);
+    if (missingFields.length > 0) {
+      toast.error(`Associe colunas para os campos obrigatórios: ${missingFields.map(f => f.label).join(', ')}`);
+      return;
+    }
+
+    saveMappingToLocal(calibrationPattern, calibrationMapping);
+    if (user?.uid) {
+      await saveMappingToCloud(user.uid, calibrationPattern, calibrationMapping, 'surgeries');
+    }
+    setIsCalibrationOpen(false);
+    
+    // Processa a planilha com o mapeamento calibrado
+    processExcelWithOptions(calibrationMapping, calibrationFileRows);
+  };
+
+  const processImportedSurgeriesWithNormalizedKeys = (rows: any[]) => {
+    const surgeriesToImport: any[] = [];
+    const seenKeys = new Set<string>();
+    const newlyAddedHospitals = new Map<string, string>();
+    let lastHospital: any = null;
+    let lastDate: any = null;
+
+    rows.forEach((row: any) => {
+      const patientName = String(row.patientName || '').trim();
+      const insurance = String(row.insurance || '').trim();
+      const attendance = String(row.attendance || '').trim();
+      const procedure = String(row.procedure || '').trim();
+      const indication = String(row.indication || '').trim();
+      const company = String(row.company || '').trim();
+      const dateRaw = row.date;
+      
+      const sheetName = row['_SheetName'];
+      const detectedHospital = row['_DetectedHospital'];
+      const hospitalRaw = row.hospitalName;
+      
+      const isSpecificSheet = sheetName && !/planilha|sheet|página|page/i.test(sheetName);
+      const hospitalName = String(hospitalRaw || detectedHospital || (isSpecificSheet ? sheetName : '') || lastHospital || '').trim();
+      
+      if (hospitalRaw || detectedHospital || isSpecificSheet) {
+         lastHospital = hospitalRaw || detectedHospital || sheetName;
+      }
+      
+      let feesPaid = parseFinancialAmount(row.feesPaid);
+      let receivedAmount = parseFinancialAmount(row.receivedAmount);
+
+      let date = parseFlexibleDate(dateRaw);
+      if (!date && lastDate) date = lastDate;
+      if (date) lastDate = date;
+
+      if (patientName || procedure) {
+        const key = `${date || ''}-${patientName.toLowerCase().trim()}-${(procedure || '').toLowerCase().trim()}`;
+        if (seenKeys.has(key)) return;
+        seenKeys.add(key);
+
+        let finalHospitalId = '';
+        if (hospitalName) {
+          const lowerName = hospitalName.toLowerCase();
+          const existing = data.hospitals.find(x => x.name.toLowerCase().trim() === lowerName);
+          
+          if (existing) finalHospitalId = existing.id;
+          else if (newlyAddedHospitals.has(lowerName)) finalHospitalId = newlyAddedHospitals.get(lowerName)!;
+          else {
+            finalHospitalId = `NEW:${hospitalName}`;
+          }
+        }
+        surgeriesToImport.push({ 
+          date: date || new Date().toISOString().split('T')[0], 
+          patientName, 
+          procedure: procedure || 'Cirurgia Importada', 
+          indication: indication || '',
+          insurance, 
+          attendance, 
+          company, 
+          feesPaid: isNaN(feesPaid) ? 0 : feesPaid, 
+          receivedAmount: isNaN(receivedAmount) ? 0 : receivedAmount, 
+          hospitalId: finalHospitalId, 
+          hospitalName: hospitalName,
+          notes: '',
+          isParticular: false,
+          particularValue: 0,
+          photos: [] 
+        });
+      }
+    });
+    return surgeriesToImport;
+  };
+
+  const processExcelWithOptions = (mapping: Record<string, string>, sheetsData: any[]) => {
+    setIsImporting(true);
+    setImportMessage('Mapeando e processando dados...');
+    
+    try {
+      let allProcessedSurgeries: any[] = [];
+      
+      for (const sheet of sheetsData) {
+        const { sheetName, sheetHospital, rows, headerIndex, headerRow } = sheet;
+        
+        // Reconstrói o mappedData com chaves normalizadas
+        const mappedData = rows.slice(headerIndex + 1).map(r => {
+          const obj: any = {};
+          
+          Object.entries(mapping).forEach(([systemKey, excelHeader]) => {
+            if (excelHeader) {
+              const headerIndexInRow = headerRow.indexOf(excelHeader);
+              if (headerIndexInRow !== -1) {
+                obj[systemKey] = r[headerIndexInRow] !== undefined ? r[headerIndexInRow] : '';
+              } else {
+                obj[systemKey] = '';
+              }
+            } else {
+              obj[systemKey] = '';
+            }
+          });
+          
+          obj['_SheetName'] = sheetName;
+          obj['_DetectedHospital'] = sheetHospital;
+          return obj;
+        }).filter(obj => {
+          const values = Object.entries(obj)
+            .filter(([key]) => key !== '_SheetName' && key !== '_DetectedHospital')
+            .map(([_, v]) => v);
+          return values.some(v => v !== '');
+        });
+        
+        if (mappedData.length > 0) {
+          const processed = processImportedSurgeriesWithNormalizedKeys(mappedData);
+          allProcessedSurgeries = [...allProcessedSurgeries, ...processed];
+        }
+      }
+      
+      if (allProcessedSurgeries.length > 0) {
+        setPreviewSurgeries(allProcessedSurgeries);
+        setIsPreviewOpen(true);
+      } else {
+        toast.warning('Nenhum dado encontrado nas abas do arquivo.');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao mapear a planilha.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -395,7 +703,7 @@ export function Surgeries() {
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           const ab = evt.target?.result;
           if (!ab) {
@@ -403,79 +711,94 @@ export function Surgeries() {
             return;
           }
           const wb = XLSX.read(ab, { type: 'array', cellDates: true });
-          let allProcessedSurgeries: any[] = [];
+          
+          let firstSheetHeaders: string[] = [];
+          const excelSheetsData: any[] = [];
+          
           for (const sheetName of wb.SheetNames) {
-            setImportMessage(`Processando aba: ${sheetName}...`);
             const ws = wb.Sheets[sheetName];
             const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+            if (rows.length === 0) continue;
             
-            if (rows.length > 0) {
-              // Look for hospital name in the first 20 rows (metadata area like Line 6)
-              let sheetHospital = '';
-              for (let i = 0; i < Math.min(rows.length, 20); i++) {
-                const row = rows[i];
-                if (!row) continue;
-                const rowStr = JSON.stringify(row).toLowerCase();
-                if (rowStr.includes('hospital') || rowStr.includes('unidade') || rowStr.includes('local:')) {
-                  // Try to find the value next to the label
-                  const found = row.find((cell: any) => cell && String(cell).length > 3 && !/hospital|unidade|local/i.test(String(cell)));
-                  if (found) {
-                    sheetHospital = String(found).trim();
-                    break;
-                  }
+            let sheetHospital = '';
+            for (let i = 0; i < Math.min(rows.length, 20); i++) {
+              const row = rows[i];
+              if (!row) continue;
+              const rowStr = JSON.stringify(row).toLowerCase();
+              if (rowStr.includes('hospital') || rowStr.includes('unidade') || rowStr.includes('local:')) {
+                const found = row.find((cell: any) => cell && String(cell).length > 3 && !/hospital|unidade|local/i.test(String(cell)));
+                if (found) {
+                  sheetHospital = String(found).trim();
+                  break;
                 }
               }
+            }
+            
+            const { headerIndex, headerRow } = findExcelHeaderRow(rows, [
+              'Paciente', 'Cirurgia', 'Data', 'Hospital', 'Procedimento', 'Convênio', 'Convenio', 'Honorários', 'Recebidos', 'Empresa', 'Atendimento', 'Valor Pago', 'Valor (1/2)', 'DATA DA CIRURGIA', 'DESCRIÇÃO', 'VALOR BRUTO', 'VALOR PAGO', 'PAGO', 'VALOR (1/2)', 'CONVENIO', 'ATENDIMENTO', 'EMPRESA'
+            ]);
+            
+            excelSheetsData.push({
+              sheetName,
+              sheetHospital,
+              rows,
+              headerIndex,
+              headerRow
+            });
+            
+            if (firstSheetHeaders.length === 0 && headerRow.length > 0) {
+              firstSheetHeaders = headerRow;
+            }
+          }
 
-              const { headerIndex, headerRow } = findExcelHeaderRow(rows, [
-                'Paciente', 'Cirurgia', 'Data', 'Hospital', 'Procedimento', 'Convênio', 'Convenio', 'Honorários', 'Recebidos', 'Empresa', 'Atendimento', 'Valor Pago', 'Valor (1/2)', 'DATA DA CIRURGIA', 'DESCRIÇÃO', 'VALOR BRUTO', 'VALOR PAGO', 'PAGO', 'VALOR (1/2)', 'CONVENIO', 'ATENDIMENTO', 'EMPRESA'
-              ]);
-              
-              const firstDataRow = rows[headerIndex + 1];
-              const finalHeaderRow = headerRow.map((h, i) => {
-                if (!h && firstDataRow && firstDataRow[i]) {
-                  const potentialHeader = String(firstDataRow[i]).trim();
-                  const keywords = ['Paciente', 'Cirurgia', 'Data', 'Hospital', 'Procedimento', 'Convênio', 'Convenio', 'Honorários', 'Recebidos', 'Empresa', 'Atendimento', 'Valor Pago', 'Valor (1/2)', 'DATA DA CIRURGIA', 'DESCRIÇÃO', 'VALOR BRUTO', 'VALOR PAGO', 'PAGO', 'VALOR (1/2)', 'CONVENIO', 'ATENDIMENTO', 'EMPRESA'];
-                  if (keywords.some(k => potentialHeader.toLowerCase().includes(k.toLowerCase()))) {
-                    return potentialHeader;
-                  }
-                }
-                return h;
-              });
-  
-              const mappedData = rows.slice(headerIndex + 1).map(r => {
-                const obj: any = {};
-                finalHeaderRow.forEach((h, i) => {
-                  if (h) obj[h] = r[i] !== undefined ? r[i] : '';
-                });
-                // Keep track of sheet name AND detected metadata hospital
-                obj['_SheetName'] = sheetName;
-                obj['_DetectedHospital'] = sheetHospital;
-                return obj;
-              }).filter(obj => {
-                // Filter out completely empty rows (ignoring _SheetName)
-                const values = Object.entries(obj)
-                  .filter(([key]) => key !== '_SheetName')
-                  .map(([_, v]) => v);
-                return values.some(v => v !== '');
-              });
-  
-              if (mappedData.length > 0) {
-                const processed = processImportedSurgeries(mappedData);
-                allProcessedSurgeries = [...allProcessedSurgeries, ...processed];
+          if (firstSheetHeaders.length === 0) {
+            toast.warning('Nenhum cabeçalho identificável encontrado na planilha.');
+            setIsImporting(false);
+            return;
+          }
+          
+          const pattern = getHeadersPattern(firstSheetHeaders);
+          setCalibrationPattern(pattern);
+          setCalibrationHeaders(firstSheetHeaders.filter(Boolean));
+          setCalibrationFileRows(excelSheetsData);
+          
+          // 1. Tentar ler do LocalStorage
+          let activeMapping = loadMappingFromLocal(pattern);
+          
+          // 2. Tentar ler do Firestore
+          if (!activeMapping && user?.uid) {
+            activeMapping = await loadMappingFromCloud(user.uid, pattern);
+            if (activeMapping) {
+              saveMappingToLocal(pattern, activeMapping);
+            }
+          }
+          
+          // 3. Tentar auto-sugestão fuzzy
+          let needsCalibration = false;
+          if (!activeMapping) {
+            const auto = suggestAutoMapping(firstSheetHeaders, SURGERY_FIELDS);
+            activeMapping = auto.mapping;
+            if (!auto.confidence) {
+              needsCalibration = true;
+            } else {
+              saveMappingToLocal(pattern, activeMapping);
+              if (user?.uid) {
+                saveMappingToCloud(user.uid, pattern, activeMapping, 'surgeries');
               }
             }
           }
           
-          if (allProcessedSurgeries.length > 0) {
-            setPreviewSurgeries(allProcessedSurgeries);
-            setIsPreviewOpen(true);
+          if (needsCalibration) {
+            setCalibrationMapping(activeMapping || {});
+            setIsCalibrationOpen(true);
+            setIsImporting(false);
           } else {
-            toast.warning('Nenhum dado encontrado nas abas da planilha. Verifique se os cabeçalhos (Data, Paciente, etc.) estão presentes.');
+            processExcelWithOptions(activeMapping, excelSheetsData);
           }
+
         } catch (err) {
           console.error(err);
           toast.error('Erro ao ler o Excel. Certifique-se de que é um arquivo .xlsx válido.');
-        } finally {
           setIsImporting(false);
         }
       }, 100);
@@ -552,53 +875,24 @@ export function Surgeries() {
   };
 
   const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const isPdf = file.type === 'application/pdf';
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    try {
-      setIsProcessing(true);
-      setProcessingMessage(isPdf ? 'Processando documento...' : 'Otimizando imagem...');
-      setIsModalOpen(true);
-      const extracted = await extractSurgeryLabel(file);
-
-      if (extracted?._quotaExhausted || extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
-        toast.warning(
-          '⚠️ Usando processamento pago — cota gratuita esgotada hoje. Renova à meia-noite (horário de Brasília).',
-          { duration: 8000 }
-        );
-      }
-
-      // Try to find hospital by name if available
-      let hospitalId = '';
-      if (extracted && extracted.hospital && data.hospitals) {
-        const hName = extracted.hospital.toLowerCase();
-        const found = data.hospitals.find(h => h.name.toLowerCase().includes(hName) || hName.includes(h.name.toLowerCase()));
-        if (found) hospitalId = found.id;
-      }
-
-      setDraftSurgery({
-        ...extracted,
-        hospitalId,
-        date: (extracted && extracted.date) || new Date().toISOString().split('T')[0]
+    const newItems: QueueItem[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      newItems.push({
+        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
+        file,
+        status: 'waiting',
+        addedAt: new Date()
       });
-    } catch (err: any) {
-      console.error(err);
-      let msg = isPdf 
-        ? 'A extração do PDF falhou. Certifique-se de que o documento é legível.'
-        : 'A leitura falhou. Tente tirar uma foto mais aproximada e nítida da etiqueta.';
-      
-      if (err instanceof Error && err.message) {
-        msg = err.message;
-      }
-      
-      setErrorMessage(msg);
-      toast.error(msg);
-      setIsModalOpen(false);
-    } finally {
-      setIsProcessing(false);
     }
-    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    setQueue(prev => [...prev, ...newItems]);
+    toast.success(`${newItems.length} etiqueta(s) adicionada(s) à fila de leitura.`);
+
+    if (e.target) e.target.value = '';
   };
 
   const handleSaveDraft = (e: React.FormEvent) => {
@@ -681,6 +975,10 @@ export function Surgeries() {
       }
     }
 
+    if (currentItemIdInModal) {
+      setQueue(prev => prev.filter(item => item.id !== currentItemIdInModal));
+      setCurrentItemIdInModal(null);
+    }
     setDraftSurgery(null);
     setIsModalOpen(false);
     if (hospitalId) setActiveHospitalId(hospitalId);
@@ -731,7 +1029,7 @@ export function Surgeries() {
         ]}
       >
         <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleCapture} />
-        <input type="file" accept="image/*,application/pdf" ref={fileInputRef} className="hidden" onChange={handleCapture} />
+        <input type="file" accept="image/*,application/pdf" ref={fileInputRef} className="hidden" multiple onChange={handleCapture} />
         <input type="file" accept=".xlsx, .xls" ref={excelInputRef} className="hidden" onChange={handleExcelImport} />
         <input type="file" accept="image/*" ref={photoInputRef} className="hidden" multiple onChange={handlePhotoUpload} />
         <input type="file" accept="image/*" capture="environment" ref={photoCameraInputRef} className="hidden" onChange={handlePhotoUpload} />
@@ -827,6 +1125,138 @@ export function Surgeries() {
             <span>Limpar Todos</span>
           </button>
         </div>
+
+        {queue.length > 0 && (
+          <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-50 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 bg-sky-500 rounded-full animate-pulse" />
+                <h3 className="text-[10px] font-black text-zinc-900 uppercase tracking-[0.2em]">Fila de Processamento de Etiquetas</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {!isOnline && (
+                  <span className="px-2 py-1 bg-amber-50 rounded-lg text-[8px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-1 border border-amber-100/50">
+                    ● Offline (Pausada)
+                  </span>
+                )}
+                <span className="text-[10px] font-mono font-bold text-zinc-400">
+                  {queue.filter(q => q.status === 'completed' || q.status === 'completed_low_confidence').length}/{queue.length} CONCLUÍDAS
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+              {queue.map(item => {
+                const isWaiting = item.status === 'waiting';
+                const isProcessing = item.status === 'processing';
+                const isCompleted = item.status === 'completed';
+                const isLowConfidence = item.status === 'completed_low_confidence';
+                const isFailed = item.status === 'failed';
+                
+                return (
+                  <div 
+                    key={item.id} 
+                    className={`p-4 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                      isProcessing ? 'bg-sky-50/50 border-sky-200 shadow-sm' :
+                      isCompleted ? 'bg-emerald-50/20 border-emerald-100' :
+                      isLowConfidence ? 'bg-amber-50/10 border-amber-100 shadow-xs' :
+                      isFailed ? 'bg-red-50/10 border-red-100' :
+                      'bg-zinc-50/30 border-zinc-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 overflow-hidden flex-1">
+                      <div className="w-10 h-10 rounded-xl bg-zinc-100/80 border border-zinc-200/50 flex items-center justify-center font-bold text-zinc-400 text-xs shrink-0 overflow-hidden">
+                        {item.file.type.startsWith('image/') ? (
+                          <img 
+                            src={URL.createObjectURL(item.file)} 
+                            alt="Preview" 
+                            className="w-full h-full object-cover" 
+                          />
+                        ) : (
+                          <span className="text-[8px] font-black font-mono">PDF</span>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-black uppercase text-zinc-700 truncate tracking-wide">
+                          {item.file.name}
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          {isWaiting && (
+                            <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded text-[7px] font-black uppercase tracking-widest">
+                              Aguardando
+                            </span>
+                          )}
+                          {isProcessing && (
+                            <span className="px-1.5 py-0.5 bg-sky-100 text-sky-700 rounded text-[7px] font-black uppercase tracking-widest flex items-center gap-1">
+                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              Lendo...
+                            </span>
+                          )}
+                          {isCompleted && (
+                            <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded text-[7px] font-black uppercase tracking-widest">
+                              ✨ Pronto (IA)
+                            </span>
+                          )}
+                          {isLowConfidence && (
+                            <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[7px] font-black uppercase tracking-widest">
+                              ⚠️ Atenção: OCR Local
+                            </span>
+                          )}
+                          {isFailed && (
+                            <span 
+                              className="px-1.5 py-0.5 bg-red-100 text-red-800 rounded text-[7px] font-black uppercase tracking-widest" 
+                              title={item.errorMessage}
+                            >
+                              Falhou
+                            </span>
+                          )}
+                          <span className="text-[8px] text-zinc-400 font-mono font-bold">
+                            {format(item.addedAt, 'HH:mm:ss')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {(isCompleted || isLowConfidence) && (
+                        <button
+                          onClick={() => handleReviewQueueItem(item)}
+                          className="px-3 py-2 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 active:scale-95 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all shadow-sm cursor-pointer"
+                        >
+                          Revisar
+                        </button>
+                      )}
+                      {isFailed && (
+                        <button
+                          onClick={() => processQueueItem(item.id, item.file)}
+                          className="px-3 py-2 bg-zinc-200 text-zinc-700 rounded-xl text-[8px] font-black uppercase tracking-widest hover:bg-zinc-300 transition-all active:scale-95"
+                        >
+                          Tentar Novamente
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setQueue(prev => prev.filter(q => q.id !== item.id));
+                          if (currentItemIdInModal === item.id) {
+                            setDraftSurgery(null);
+                            setIsModalOpen(false);
+                            setCurrentItemIdInModal(null);
+                          }
+                        }}
+                        className="p-2 hover:bg-red-50 text-zinc-400 hover:text-red-500 rounded-xl transition-all"
+                        title="Remover"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+
+
         {/* Hospital Selector (Pills) */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
@@ -1132,6 +1562,78 @@ export function Surgeries() {
         );
       })()}
 
+      <Dialog isOpen={isCalibrationOpen} onClose={() => setIsCalibrationOpen(false)} title="Mapeamento de Planilha" size="lg">
+        <div id="calibration-modal-surgeries" className="p-6 space-y-6">
+          <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 flex gap-3">
+             <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+             <div className="space-y-1">
+                <h4 className="text-[11px] font-black uppercase tracking-wider text-amber-800">
+                   Calibração de Planilha Necessária
+                </h4>
+                <p className="text-[11px] text-amber-700/80 font-bold leading-relaxed">
+                   Detectamos novas colunas nesta planilha. Associe os dados da sua planilha (esquerda) aos campos do aplicativo (direita) para importar com perfeição. O sistema lembrará de sua escolha para as próximas importações!
+                </p>
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[400px] overflow-y-auto pr-2">
+            {SURGERY_FIELDS.map(field => {
+              const currentVal = calibrationMapping[field.key] || '';
+              return (
+                <div key={field.key} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100/80 space-y-2 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest block">
+                      Campo do Sistema
+                    </span>
+                    <label className="text-[11px] font-black uppercase tracking-tight text-zinc-800 flex items-center gap-1.5 mt-0.5">
+                      {field.label}
+                      {field.required && (
+                        <span className="text-amber-600 font-black text-[10px]" title="Obrigatório">*</span>
+                      )}
+                    </label>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                      Coluna da Planilha
+                    </span>
+                    <select
+                      className="w-full text-[11px] font-bold uppercase tracking-tight bg-white border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-zinc-900 transition-all cursor-pointer"
+                      value={currentVal}
+                      onChange={(e) => {
+                        setCalibrationMapping(prev => ({ ...prev, [field.key]: e.target.value }));
+                      }}
+                    >
+                      <option value="">-- Ignorar ou Não Encontrada --</option>
+                      {calibrationHeaders.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              id="btn-cancel-calibration"
+              onClick={() => setIsCalibrationOpen(false)}
+              className="flex-1 text-[10px] font-black uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 py-3.5 rounded-2xl transition-all scale-press active:scale-95 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              id="btn-confirm-calibration"
+              onClick={handleSaveCalibration}
+              className="flex-1 text-[10px] font-black uppercase tracking-wider text-white bg-zinc-900 hover:bg-zinc-800 py-3.5 rounded-2xl transition-all scale-press active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              Confirmar & Importar
+            </button>
+          </div>
+        </div>
+      </Dialog>
+
       <Dialog isOpen={isImporting} onClose={() => setIsImporting(false)} title="Importando Dados">
         <div className="py-20 text-center space-y-4">
            <Loader2 className="w-10 h-10 animate-spin mx-auto text-zinc-900" />
@@ -1163,7 +1665,7 @@ export function Surgeries() {
          </div>
       </Dialog>
 
-      <Dialog isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Check-in Cirúrgico">
+      <Dialog isOpen={isModalOpen} onClose={handleCloseModal} title="Check-in Cirúrgico">
         {isProcessing ? (
           <div className="py-20 text-center space-y-4">
             <Loader2 className="w-10 h-10 animate-spin mx-auto text-zinc-900" />
@@ -1179,11 +1681,19 @@ export function Surgeries() {
                   <p className="opacity-90">Não foi possível ler as informações legíveis por completo. Por favor, preencha ou complemente os campos manualmente abaixo.</p>
                 </div>
               </div>
+            ) : draftSurgery.isLocalOCR ? (
+              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-[11px] text-amber-800 leading-relaxed shadow-sm">
+                <span className="text-sm font-bold flex-shrink-0 text-amber-600">⚠️</span>
+                <div>
+                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5 text-[#B7791F]">BAIXA CONFIANÇA (PROCESSAMENTO LOCAL)</p>
+                  <p className="text-amber-700/95">O sistema recorreu ao processador local de backup por falha ou tempo de resposta da Audit AI. Erros de digitação ou campos incompletos são comuns. Atenção redobrada!</p>
+                </div>
+              </div>
             ) : (
               <div className="p-3 bg-[#EAF7ED] border border-[#D5ECCF] rounded-2xl flex items-start gap-2.5 text-[11px] text-[#34A853] leading-relaxed">
                 <span className="text-sm font-bold flex-shrink-0">✨</span>
                 <div>
-                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5">Etiqueta Importada com IA</p>
+                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5">Alta Confiança (IA de Produção Audit AI)</p>
                   <p className="opacity-90">Alguns dados foram extraídos do documento. Revise as informações nos campos abaixo antes de salvar.</p>
                 </div>
               </div>
@@ -1285,10 +1795,29 @@ export function Surgeries() {
                   <div><label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">RECEBIDOS (R$)</label><input name="receivedAmount" type="number" step="0.01" defaultValue={draftSurgery.receivedAmount || 0} className="w-full p-3 text-xs font-bold border rounded-2xl" /></div>
                </div>
             </div>
-            <button type="submit" className="w-full py-4 bg-[#162744] text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2">
-               <span className="action-dot" />
-               Finalizar Checklist
-            </button>
+            {currentItemIdInModal ? (
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={handleCloseModal}
+                  className="flex-1 py-4 bg-red-50 hover:bg-red-100 text-red-600 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  Descartar
+                </button>
+                <button 
+                  type="submit" 
+                  className="flex-[2] py-4 bg-[#162744] hover:bg-[#0f1b32] text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span className="action-dot animate-pulse" />
+                  Salvar Cirurgia
+                </button>
+              </div>
+            ) : (
+              <button type="submit" className="w-full py-4 bg-[#162744] text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2">
+                 <span className="action-dot" />
+                 Finalizar Checklist
+              </button>
+            )}
           </form>
         ) : null}
       </Dialog>

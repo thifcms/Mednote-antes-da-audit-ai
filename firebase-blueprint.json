@@ -108,6 +108,19 @@
       },
       "required": ["diagnosis", "procedure", "userId"]
     },
+    "ExcelMapping": {
+      "title": "Excel Mapping",
+      "description": "Custom header mapping for Excel sheet import",
+      "type": "object",
+      "properties": {
+        "headersPattern": { "type": "string" },
+        "mapping": { "type": "object" },
+        "sheetType": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["headersPattern", "mapping", "sheetType", "userId"]
+    },
     "UserSettings": {
       "title": "User Settings",
       "description": "General settings for the user",
@@ -147,6 +160,10 @@
     "users/{userId}/surgery_templates": {
       "schema": "SurgeryTemplate",
       "description": "User's manual templates for autocomplete suggestions"
+    },
+    "users/{userId}/excel_mappings": {
+      "schema": "ExcelMapping",
+      "description": "User's custom header mappings for Excel imports"
     },
     "users": {
         "schema": "UserSettings",

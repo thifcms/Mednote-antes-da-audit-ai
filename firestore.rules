@@ -84,6 +84,13 @@ service cloud.firestore {
              data.userId == request.auth.uid;
     }
 
+    function isValidExcelMapping(data) {
+      return data.keys().hasAll(['headersPattern', 'mapping', 'sheetType', 'userId', 'createdAt']) &&
+             data.headersPattern is string && data.headersPattern.size() <= 3000 &&
+             data.sheetType is string &&
+             data.userId == request.auth.uid;
+    }
+
     function isValidPayment(data) {
       return data.keys().hasAll(['date', 'amount', 'userId', 'createdAt']) &&
              data.date is string &&
@@ -149,6 +156,15 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isValidSurgeryTemplate(incoming());
         allow update: if isOwner(userId) && isValidSurgeryTemplate(incoming()) &&
                       incoming().diff(existing()).affectedKeys().hasOnly(['diagnosis', 'procedure', 'userId', 'createdAt', 'id']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /excel_mappings/{mappingId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidExcelMapping(incoming());
+        allow update: if isOwner(userId) && isValidExcelMapping(incoming()) &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['headersPattern', 'mapping', 'sheetType', 'userId', 'createdAt', 'id']);
         allow delete: if isOwner(userId);
       }
 
