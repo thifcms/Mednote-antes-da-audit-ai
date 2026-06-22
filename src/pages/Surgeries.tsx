@@ -20,6 +20,114 @@ import { formatCurrency, findExcelHeaderRow, safeFormat, cn, resizeImage, compre
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 
+const matchHospitalFlexible = (hosp1: string, hosp2: string): boolean => {
+  if (!hosp1 || !hosp2) return false;
+  const norm = (s: string) => s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "")
+    .replace(/\b(hospital|hosp|clinica)\b/gi, "")
+    .trim();
+  const n1 = norm(hosp1);
+  const n2 = norm(hosp2);
+  if (!n1 || !n2) return false;
+  return n1 === n2 || n1.includes(n2) || n2.includes(n1);
+};
+
+const detectHospitalAndHeader = (rows: any[][]) => {
+  const coreKeywords = ['paciente', 'convenio', 'convênio', 'atendimento', 'cirurgia', 'procedimento', 'data'];
+  
+  let headerIndex = -1;
+  let maxCoreMatch = 0;
+  let bestHeaderRow: string[] = [];
+
+  // 1. Detect column header row (scanning first 25 rows)
+  for (let i = 0; i < Math.min(rows.length, 25); i++) {
+    const row = rows[i];
+    if (!row || !Array.isArray(row)) continue;
+    
+    const rowStrArr = row.map(cell => String(cell || '').toLowerCase().trim());
+    
+    let matches = 0;
+    rowStrArr.forEach(cellText => {
+      if (coreKeywords.some(kw => cellText === kw || cellText.includes(kw))) {
+        matches++;
+      }
+    });
+
+    if (matches > maxCoreMatch) {
+      maxCoreMatch = matches;
+      headerIndex = i;
+      bestHeaderRow = row.map(c => String(c || '').trim());
+    }
+  }
+
+  // Fallback if no strong match of 2+ core header columns is found
+  if (headerIndex === -1 || maxCoreMatch < 2) {
+    const standard = findExcelHeaderRow(rows, [
+      'Paciente', 'Cirurgia', 'Data', 'Hospital', 'Procedimento', 'Convênio', 'Convenio', 'Honorários', 'Recebidos', 'Empresa', 'Atendimento', 'Valor Pago', 'Valor (1/2)', 'DATA DA CIRURGIA', 'DESCRIÇÃO', 'VALOR BRUTO', 'VALOR PAGO', 'PAGO', 'VALOR (1/2)', 'CONVENIO', 'ATENDIMENTO', 'EMPRESA'
+    ]);
+    headerIndex = standard.headerIndex;
+    bestHeaderRow = standard.headerRow;
+  }
+
+  // Identify if there is an explicit "HOSPITAL" column in the header row
+  const headerRowLower = bestHeaderRow.map(h => String(h || '').toLowerCase().trim());
+  const hasHospitalColumn = headerRowLower.some(h => 
+    h === 'hospital' || h === 'local' || h === 'hosp' || h.includes('hospital')
+  );
+
+  // 2. Scan lines BEFORE headerIndex for loose text (hospital name)
+  let looseHospitalText = '';
+  const searchLimit = headerIndex !== -1 ? headerIndex : 10;
+  
+  for (let i = 0; i < searchLimit; i++) {
+    const row = rows[i];
+    if (!row || !Array.isArray(row)) continue;
+    
+    // Get non-empty cells
+    const nonColVals = row
+      .map(c => String(c || '').trim())
+      .filter(val => val.length > 2); // avoid noise
+      
+    if (nonColVals.length === 1) {
+      const val = nonColVals[0];
+      const valLower = val.toLowerCase();
+      // Avoid common spreadsheet labels that aren't hospital names
+      const isGeneric = /faturamento|relatório|relatorio|planilha|controle|cirurgia|total|médico|medico|dr\.|diagnostico|diagnóstico|resumo|consolidado/i.test(valLower);
+      if (!isGeneric && val.length > 3) {
+        looseHospitalText = val;
+        break;
+      }
+    } else if (nonColVals.length > 0 && nonColVals.length <= 3) {
+      // Sometimes it's like ["Hospital:", "SANTA VIRGINIA"]
+      for (const val of nonColVals) {
+        const valLower = val.toLowerCase();
+        const isGeneric = /faturamento|relatório|relatorio|planilha|controle|cirurgia|total|médico|medico|dr\.|diagnostico|diagnóstico|resumo|consolidado/i.test(valLower);
+        if (valLower.includes('hospital:') || valLower.includes('local:')) {
+          const cleanVal = val.replace(/hospital:|local:/i, '').trim();
+          if (cleanVal.length > 3) {
+            looseHospitalText = cleanVal;
+            break;
+          }
+        }
+        if (!isGeneric && val.length > 4 && !looseHospitalText) {
+          looseHospitalText = val;
+        }
+      }
+      if (looseHospitalText) break;
+    }
+  }
+
+  return {
+    headerIndex,
+    headerRow: bestHeaderRow,
+    detectedHospital: looseHospitalText,
+    hasHospitalColumn
+  };
+};
+
 export function Surgeries() {
   const { user, data, addSurgery, updateSurgery, deleteSurgery, addHospital, deleteSurgeries, deleteAllSurgeries, addSurgeryTemplate } = useApp();
   const [activeHospitalId, setActiveHospitalId] = useState<string | 'ALL'>('ALL');
@@ -37,6 +145,15 @@ export function Surgeries() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState('');
+  const [isReconcilingMode, setIsReconcilingMode] = useState(false);
+  const [reconciliationState, setReconciliationState] = useState<{
+    isOpen: boolean;
+    newSurgeries: any[];
+    updatedSurgeries: { id: string, updates: any }[];
+    unchangedCount: number;
+  } | null>(null);
+  
+  const reconcileInputRef = useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'period' | 'all'>('all');
   const [startDate, setStartDate] = useState(format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd'));
@@ -50,6 +167,8 @@ export function Surgeries() {
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pasteContent, setPasteContent] = useState('');
   
+
+
   const [isViewPhotoModalOpen, setIsViewPhotoModalOpen] = useState(false);
   const [viewingPhotoIndex, setViewingPhotoIndex] = useState(0);
   const [targetSurgeryIdForPhoto, setTargetSurgeryIdForPhoto] = useState<string | null>(null);
@@ -149,9 +268,9 @@ export function Surgeries() {
       
       let hospitalId = '';
       if (extracted && extracted.hospital && data.hospitals) {
-        const hName = extracted.hospital.toLowerCase();
+        const hName = extracted.hospital;
         const found = data.hospitals.find(h => 
-          h.name.toLowerCase().includes(hName) || hName.includes(h.name.toLowerCase())
+          matchHospitalFlexible(h.name, hName)
         );
         if (found) hospitalId = found.id;
       }
@@ -444,17 +563,28 @@ export function Surgeries() {
       const sheetName = row['_SheetName'];
       const detectedHospital = row['_DetectedHospital'];
       const hospitalRaw = getVal(['Hospital', 'Local', 'HOSPITAL']);
+      const hadHospitalColumn = row['_HadHospitalColumn'] === true || !!hospitalRaw;
       
-      // Order of priority: 1. Column Value, 2. Detected Metadata (Line 6), 3. Sheet Name
-      const isSpecificSheet = sheetName && !/planilha|sheet|página|page/i.test(sheetName);
-      const hospitalName = String(hospitalRaw || detectedHospital || (isSpecificSheet ? sheetName : '') || lastHospital || '').trim();
-      
-      if (hospitalRaw || detectedHospital || isSpecificSheet) {
-         lastHospital = hospitalRaw || detectedHospital || sheetName;
+      let hospitalName = '';
+      if (hadHospitalColumn) {
+        hospitalName = String(hospitalRaw || lastHospital || '').trim();
+      } else {
+        hospitalName = String(detectedHospital || '').trim();
       }
       
-      let feesPaid = parseFinancialAmount(getVal(['Honorários', 'Honorários Pagos', 'Fees Paid', 'VALOR BRUTO', 'Valor Pago', 'VALOR PAGO']));
-      let receivedAmount = parseFinancialAmount(getVal(['Recebidos', 'Honorários Recebidos', 'Valor (1/2)', 'PAGO', 'Valor Recebido', 'VALOR (1/2)']));
+      if (hospitalName) {
+        lastHospital = hospitalName;
+      }
+      
+      const rawFeesPaid = getVal(['Honorários', 'Honorários Pagos', 'Fees Paid', 'VALOR BRUTO', 'Valor Pago', 'VALOR PAGO']);
+      const rawReceivedAmount = getVal(['Recebidos', 'Honorários Recebidos', 'Valor (1/2)', 'PAGO', 'Valor Recebido', 'VALOR (1/2)']);
+      
+      let feesPaid = parseFinancialAmount(rawFeesPaid);
+      let receivedAmount = parseFinancialAmount(rawReceivedAmount);
+      
+      if (rawFeesPaid === rawReceivedAmount && rawFeesPaid) {
+        receivedAmount = 0;
+      }
 
       let date = parseFlexibleDate(dateRaw);
       if (!date && lastDate) date = lastDate;
@@ -468,7 +598,7 @@ export function Surgeries() {
         let finalHospitalId = '';
         if (hospitalName) {
           const lowerName = hospitalName.toLowerCase();
-          const existing = data.hospitals.find(x => x.name.toLowerCase().trim() === lowerName);
+          const existing = data.hospitals.find(x => (x.name || '').toLowerCase().trim() === lowerName);
           
           if (existing) finalHospitalId = existing.id;
           else if (newlyAddedHospitals.has(lowerName)) finalHospitalId = newlyAddedHospitals.get(lowerName)!;
@@ -505,13 +635,14 @@ export function Surgeries() {
 
     // Use a local copy to track what's being added in the current batch
     const currentSurgeries = [...data.surgeries];
+    const createdHospitalsCache = new Map<string, string>();
 
     for (const s of previewSurgeries) {
       // Check for duplicates in existing data AND in the current batch
       const isDuplicate = currentSurgeries.some(existing => 
         existing.date === s.date && 
-        existing.patientName.toLowerCase().trim() === s.patientName.toLowerCase().trim() &&
-        existing.procedure.toLowerCase().trim() === s.procedure.toLowerCase().trim()
+        (existing.patientName || '').toLowerCase().trim() === (s.patientName || '').toLowerCase().trim() &&
+        (existing.procedure || '').toLowerCase().trim() === (s.procedure || '').toLowerCase().trim()
       );
 
       if (isDuplicate) {
@@ -523,12 +654,20 @@ export function Surgeries() {
       let finalHospitalId = s.hospitalId;
       if (finalHospitalId?.startsWith('NEW:')) {
         const hospitalName = s.hospitalName;
-        const lowerName = hospitalName.toLowerCase();
-        const existing = data.hospitals.find(x => x.name.toLowerCase().trim() === lowerName);
+        const lowerName = hospitalName.toLowerCase().trim();
+        const existing = data.hospitals.find(x => matchHospitalFlexible(x.name, hospitalName));
         if (existing) {
           finalHospitalId = existing.id;
+        } else if (createdHospitalsCache.has(lowerName)) {
+          finalHospitalId = createdHospitalsCache.get(lowerName)!;
         } else {
-          finalHospitalId = '';
+          const newHospId = crypto.randomUUID();
+          await addHospital({
+            id: newHospId,
+            name: hospitalName
+          });
+          createdHospitalsCache.set(lowerName, newHospId);
+          finalHospitalId = newHospId;
         }
       }
       
@@ -557,7 +696,11 @@ export function Surgeries() {
     setIsCalibrationOpen(false);
     
     // Processa a planilha com o mapeamento calibrado
-    processExcelWithOptions(calibrationMapping, calibrationFileRows);
+    if (isReconcilingMode) {
+      processReconciliationWithOptions(calibrationMapping, calibrationFileRows);
+    } else {
+      processExcelWithOptions(calibrationMapping, calibrationFileRows);
+    }
   };
 
   const processImportedSurgeriesWithNormalizedKeys = (rows: any[]) => {
@@ -576,15 +719,20 @@ export function Surgeries() {
       const company = String(row.company || '').trim();
       const dateRaw = row.date;
       
-      const sheetName = row['_SheetName'];
-      const detectedHospital = row['_DetectedHospital'];
-      const hospitalRaw = row.hospitalName;
+      const sheetName = String(row['_SheetName'] || '').trim();
+      const detectedHospital = String(row['_DetectedHospital'] || '').trim();
+      const hospitalRaw = String(row.hospitalName || '').trim();
+      const hadHospitalColumn = row['_HadHospitalColumn'] === true;
       
-      const isSpecificSheet = sheetName && !/planilha|sheet|página|page/i.test(sheetName);
-      const hospitalName = String(hospitalRaw || detectedHospital || (isSpecificSheet ? sheetName : '') || lastHospital || '').trim();
+      let hospitalName = '';
+      if (hadHospitalColumn) {
+        hospitalName = hospitalRaw || lastHospital || '';
+      } else {
+        hospitalName = detectedHospital || '';
+      }
       
-      if (hospitalRaw || detectedHospital || isSpecificSheet) {
-         lastHospital = hospitalRaw || detectedHospital || sheetName;
+      if (hospitalName) {
+         lastHospital = hospitalName;
       }
       
       let feesPaid = parseFinancialAmount(row.feesPaid);
@@ -594,15 +742,15 @@ export function Surgeries() {
       if (!date && lastDate) date = lastDate;
       if (date) lastDate = date;
 
-      if (patientName || procedure) {
-        const key = `${date || ''}-${patientName.toLowerCase().trim()}-${(procedure || '').toLowerCase().trim()}`;
+      if (patientName || procedure || indication) {
+        const key = `${date || ''}-${(patientName || '').toLowerCase().trim()}-${(procedure || indication || '').toLowerCase().trim()}`;
         if (seenKeys.has(key)) return;
         seenKeys.add(key);
 
         let finalHospitalId = '';
         if (hospitalName) {
           const lowerName = hospitalName.toLowerCase();
-          const existing = data.hospitals.find(x => x.name.toLowerCase().trim() === lowerName);
+          const existing = data.hospitals.find(x => (x.name || '').toLowerCase().trim() === lowerName);
           
           if (existing) finalHospitalId = existing.id;
           else if (newlyAddedHospitals.has(lowerName)) finalHospitalId = newlyAddedHospitals.get(lowerName)!;
@@ -613,7 +761,7 @@ export function Surgeries() {
         surgeriesToImport.push({ 
           date: date || new Date().toISOString().split('T')[0], 
           patientName, 
-          procedure: procedure || 'Cirurgia Importada', 
+          procedure: procedure || indication || 'Cirurgia Importada', 
           indication: indication || '',
           insurance, 
           attendance, 
@@ -640,31 +788,80 @@ export function Surgeries() {
       let allProcessedSurgeries: any[] = [];
       
       for (const sheet of sheetsData) {
-        const { sheetName, sheetHospital, rows, headerIndex, headerRow } = sheet;
+        const { sheetName, sheetHospital, hasHospitalColumn, rows, headerIndex, headerRow } = sheet;
         
         // Reconstrói o mappedData com chaves normalizadas
         const mappedData = rows.slice(headerIndex + 1).map(r => {
+          if (!r || !Array.isArray(r)) return null;
+          
+          // Verifica se a linha está totalmente vazia
+          const isEmpty = r.every(cell => cell === undefined || cell === null || String(cell).trim() === "");
+          if (isEmpty) return null;
+
           const obj: any = {};
           
+          // Mapeamento insensível a maiúsculas/minúsculas para compatibilidade entre abas
+          const headerRowLower = headerRow.map(h => String(h || '').toLowerCase().trim());
+          
+          // Resolução inteligente e desduplicação de feesPaid e receivedAmount para cada aba
+          let feesPaidIdx = -1;
+          let receivedAmountIdx = -1;
+          
+          if (mapping['feesPaid']) {
+            feesPaidIdx = headerRowLower.indexOf(String(mapping['feesPaid']).toLowerCase().trim());
+          }
+          if (mapping['receivedAmount']) {
+            receivedAmountIdx = headerRowLower.indexOf(String(mapping['receivedAmount']).toLowerCase().trim());
+          }
+          
+          // Se as duas apontam para a mesma coluna de honorários ou se receivedAmount não tem mapeamento forte
+          if (feesPaidIdx !== -1) {
+            if (feesPaidIdx === receivedAmountIdx || receivedAmountIdx === -1) {
+              const rightIdx = feesPaidIdx + 1;
+              if (rightIdx < headerRow.length) {
+                const rightHeader = String(headerRow[rightIdx] || '').toLowerCase().trim();
+                const isCriticalMapping = ['patientname', 'date', 'procedure', 'hospitalname', 'insurance'].some(k => 
+                  mapping[k] && String(mapping[k]).toLowerCase().trim() === rightHeader
+                );
+                if (!isCriticalMapping) {
+                  receivedAmountIdx = rightIdx;
+                }
+              }
+            }
+          }
+          
+          // Trata o caso em que elas continuam iguais por falta de coluna à direita
+          if (feesPaidIdx !== -1 && feesPaidIdx === receivedAmountIdx) {
+            receivedAmountIdx = -1; // zera receivedAmount para evitar duplicar
+          }
+
           Object.entries(mapping).forEach(([systemKey, excelHeader]) => {
-            if (excelHeader) {
-              const headerIndexInRow = headerRow.indexOf(excelHeader);
-              if (headerIndexInRow !== -1) {
-                obj[systemKey] = r[headerIndexInRow] !== undefined ? r[headerIndexInRow] : '';
+            if (systemKey === 'feesPaid') {
+              obj['feesPaid'] = feesPaidIdx !== -1 && r[feesPaidIdx] !== undefined ? r[feesPaidIdx] : '';
+            } else if (systemKey === 'receivedAmount') {
+              obj['receivedAmount'] = receivedAmountIdx !== -1 && r[receivedAmountIdx] !== undefined ? r[receivedAmountIdx] : '';
+            } else {
+              if (excelHeader) {
+                const headerIndexInRow = headerRowLower.indexOf(String(excelHeader).toLowerCase().trim());
+                if (headerIndexInRow !== -1) {
+                  obj[systemKey] = r[headerIndexInRow] !== undefined ? r[headerIndexInRow] : '';
+                } else {
+                  obj[systemKey] = '';
+                }
               } else {
                 obj[systemKey] = '';
               }
-            } else {
-              obj[systemKey] = '';
             }
           });
           
           obj['_SheetName'] = sheetName;
           obj['_DetectedHospital'] = sheetHospital;
+          obj['_HadHospitalColumn'] = hasHospitalColumn;
           return obj;
-        }).filter(obj => {
+        }).filter(Boolean).filter(obj => {
+          if (!obj) return false;
           const values = Object.entries(obj)
-            .filter(([key]) => key !== '_SheetName' && key !== '_DetectedHospital')
+            .filter(([key]) => key !== '_SheetName' && key !== '_DetectedHospital' && key !== '_HadHospitalColumn')
             .map(([_, v]) => v);
           return values.some(v => v !== '');
         });
@@ -689,7 +886,170 @@ export function Surgeries() {
     }
   };
 
-  const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const processReconciliationWithOptions = (mapping: Record<string, string>, sheetsData: any[]) => {
+    setIsImporting(true);
+    setImportMessage('Preparando reconciliação...');
+    
+    try {
+      let sheetsItems: any[] = [];
+      const newSurgeries: any[] = [];
+      const updatedSurgeries: { id: string, updates: any }[] = [];
+      
+      const normalizeText = (text: string) => text ? text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim() : "";
+      
+      const getNormalizedDateStr = (dateVal: any) => {
+        const d = parseFlexibleDate(dateVal);
+        if (!d) return "";
+        return d;
+      };
+
+      sheetsData.forEach(({ sheetName, sheetHospital, hasHospitalColumn, rows, headerIndex, headerRow }) => {
+        const dataRows = rows.slice(headerIndex + 1);
+        const mappedData = dataRows.map((row: any[]) => {
+          if (!row || !Array.isArray(row)) return null;
+          
+          // Verifica se a linha está totalmente vazia
+          const isEmpty = row.every(cell => cell === undefined || cell === null || String(cell).trim() === "");
+          if (isEmpty) return null;
+
+           const obj: any = {};
+          // Mapeamento insensível a maiúsculas/minúsculas para compatibilidade entre abas
+          const headerRowLower = headerRow.map(h => String(h || '').toLowerCase().trim());
+          
+          // Resolução inteligente e desduplicação de feesPaid e receivedAmount para cada aba
+          let feesPaidIdx = -1;
+          let receivedAmountIdx = -1;
+          
+          if (mapping['feesPaid']) {
+            feesPaidIdx = headerRowLower.indexOf(String(mapping['feesPaid']).toLowerCase().trim());
+          }
+          if (mapping['receivedAmount']) {
+            receivedAmountIdx = headerRowLower.indexOf(String(mapping['receivedAmount']).toLowerCase().trim());
+          }
+          
+          // Se as duas apontam para a mesma coluna de honorários ou se receivedAmount não tem mapeamento forte
+          if (feesPaidIdx !== -1) {
+            if (feesPaidIdx === receivedAmountIdx || receivedAmountIdx === -1) {
+              const rightIdx = feesPaidIdx + 1;
+              if (rightIdx < headerRow.length) {
+                const rightHeader = String(headerRow[rightIdx] || '').toLowerCase().trim();
+                const isCriticalMapping = ['patientname', 'date', 'procedure', 'hospitalname', 'insurance'].some(k => 
+                  mapping[k] && String(mapping[k]).toLowerCase().trim() === rightHeader
+                );
+                if (!isCriticalMapping) {
+                  receivedAmountIdx = rightIdx;
+                }
+              }
+            }
+          }
+          
+          // Trata o caso em que elas continuam iguais por falta de coluna à direita
+          if (feesPaidIdx !== -1 && feesPaidIdx === receivedAmountIdx) {
+            receivedAmountIdx = -1; // zera receivedAmount para evitar duplicar
+          }
+
+          Object.entries(mapping).forEach(([systemKey, excelHeader]) => {
+            if (systemKey === 'feesPaid') {
+              obj['feesPaid'] = feesPaidIdx !== -1 && row[feesPaidIdx] !== undefined ? row[feesPaidIdx] : '';
+            } else if (systemKey === 'receivedAmount') {
+              obj['receivedAmount'] = receivedAmountIdx !== -1 && row[receivedAmountIdx] !== undefined ? row[receivedAmountIdx] : '';
+            } else {
+              if (excelHeader) {
+                const headerIndexInRow = headerRowLower.indexOf(String(excelHeader).toLowerCase().trim());
+                if (headerIndexInRow !== -1) {
+                  obj[systemKey] = row[headerIndexInRow] !== undefined ? row[headerIndexInRow] : '';
+                } else {
+                  obj[systemKey] = '';
+                }
+              } else {
+                obj[systemKey] = '';
+              }
+            }
+          });
+          obj['_SheetName'] = sheetName;
+          obj['_DetectedHospital'] = sheetHospital;
+          obj['_HadHospitalColumn'] = hasHospitalColumn;
+          return obj;
+        }).filter(Boolean).filter((obj: any) => obj && Object.keys(obj).length > 2 && obj.patientName);
+        
+        console.log(`Reconciliation Sheet [${sheetName}]: Data Rows: ${dataRows.length}, Mapped: ${mappedData.length}`);
+        const processed = processImportedSurgeriesWithNormalizedKeys(mappedData);
+        sheetsItems.push(...processed);
+      });
+      
+      console.log(`Reconciliation Total Processed Items: ${sheetsItems.length}`);
+      
+      sheetsItems.forEach((excelSurgery) => {
+        const name1 = normalizeText(excelSurgery.patientName);
+        const att1 = normalizeText(excelSurgery.attendance);
+        const d1 = getNormalizedDateStr(excelSurgery.date);
+        
+        const match = data.surgeries?.find(s => {
+          const name2 = normalizeText(s.patientName);
+          const att2 = normalizeText(s.attendance);
+          const d2 = getNormalizedDateStr(s.date);
+          
+          if (!name1 || !name2 || !d1 || !d2) return false;
+          if (att1 && att2) {
+             return name1 === name2 && att1 === att2 && d1 === d2;
+          }
+          return name1 === name2 && d1 === d2;
+        });
+
+        if (match) {
+          // Mantém os dados da cirurgia existente e apenas mescla campos faltantes/importantes 
+          // do Excel, garantindo que NADA do que foi feito no app (fotos, notas) seja apagado.
+          const updates: any = {};
+          let hasUpdates = false;
+
+          Object.keys(excelSurgery).forEach(key => {
+            // Ignora campos do app que nunca devem ser sobrescritos pelo Excel
+            if (['id', 'photos', 'notes', 'isParticular', 'particularValue', 'aiSourceHash', 'userId', 'createdAt'].includes(key)) return;
+            
+            const excelValue = excelSurgery[key];
+            const currentValue = (match as any)[key];
+
+            // Só atualiza se o Excel tiver um dado válido, e se for diferente do atual
+            if (excelValue !== undefined && excelValue !== null && excelValue !== '' && excelValue !== 0 && excelValue !== 'Cirurgia Importada') {
+               if (currentValue !== excelValue || (key === 'hospitalId' && String(currentValue).startsWith('NEW:'))) {
+                 // Para campos de preenchimento de segurança, preferimos apenas adicionar se estiver vazio no app,
+                 // exceto para "institucionais" como numero de atendimento, convenio e hospital, que o Excel domina.
+                 if (!currentValue || currentValue === 'Cirurgia Importada' || String(currentValue).startsWith('NEW:') || ['insurance', 'attendance', 'hospitalId', 'hospitalName', 'feesPaid', 'receivedAmount', 'company'].includes(key)) {
+                    updates[key] = excelValue;
+                    hasUpdates = true;
+                 }
+               }
+            }
+          });
+
+          if (hasUpdates) {
+            updatedSurgeries.push({ id: match.id, updates });
+          }
+        } else {
+          // Excel only -> new
+          newSurgeries.push(excelSurgery);
+        }
+      });
+
+      const unchangedCount = (data.surgeries?.length || 0) - updatedSurgeries.length;
+
+      setReconciliationState({
+        isOpen: true,
+        newSurgeries,
+        updatedSurgeries,
+        unchangedCount
+      });
+
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao mapear a planilha para reconciliação.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, isReconcile: boolean = false) => {
+    setIsReconcilingMode(isReconcile);
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -699,7 +1059,7 @@ export function Surgeries() {
     }
 
     setIsImporting(true);
-    setImportMessage('Lendo arquivo...');
+    setImportMessage(isReconcile ? 'Lendo arquivo de reconciliação...' : 'Lendo arquivo...');
 
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -717,30 +1077,39 @@ export function Surgeries() {
           
           for (const sheetName of wb.SheetNames) {
             const ws = wb.Sheets[sheetName];
-            const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+            let rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, blankrows: true });
             if (rows.length === 0) continue;
             
-            let sheetHospital = '';
-            for (let i = 0; i < Math.min(rows.length, 20); i++) {
+            // Log do comprimento original
+            console.log(`[Excel Reader] Aba: ${sheetName}. Linhas lidas originalmente: ${rows.length}`);
+
+            // Trunca as linhas somente se houver 5 ou mais consecutivas completamente vazias
+            let consecutiveEmptyCount = 0;
+            let truncateIndex = rows.length;
+            
+            for (let i = 0; i < rows.length; i++) {
               const row = rows[i];
-              if (!row) continue;
-              const rowStr = JSON.stringify(row).toLowerCase();
-              if (rowStr.includes('hospital') || rowStr.includes('unidade') || rowStr.includes('local:')) {
-                const found = row.find((cell: any) => cell && String(cell).length > 3 && !/hospital|unidade|local/i.test(String(cell)));
-                if (found) {
-                  sheetHospital = String(found).trim();
+              const isEmpty = !row || !Array.isArray(row) || row.every(cell => cell === undefined || cell === null || String(cell).trim() === "");
+              if (isEmpty) {
+                consecutiveEmptyCount++;
+                if (consecutiveEmptyCount >= 5) {
+                  truncateIndex = i - 4; // Trunca no início da sequência de 5 vazias
                   break;
                 }
+              } else {
+                consecutiveEmptyCount = 0;
               }
             }
             
-            const { headerIndex, headerRow } = findExcelHeaderRow(rows, [
-              'Paciente', 'Cirurgia', 'Data', 'Hospital', 'Procedimento', 'Convênio', 'Convenio', 'Honorários', 'Recebidos', 'Empresa', 'Atendimento', 'Valor Pago', 'Valor (1/2)', 'DATA DA CIRURGIA', 'DESCRIÇÃO', 'VALOR BRUTO', 'VALOR PAGO', 'PAGO', 'VALOR (1/2)', 'CONVENIO', 'ATENDIMENTO', 'EMPRESA'
-            ]);
+            rows = rows.slice(0, truncateIndex);
+            console.log(`[Excel Reader] Aba: ${sheetName}. Linhas após truncamento de segurança (5 vazias seguidas): ${rows.length}`);
+
+            const { headerIndex, headerRow, detectedHospital, hasHospitalColumn } = detectHospitalAndHeader(rows);
             
             excelSheetsData.push({
               sheetName,
-              sheetHospital,
+              sheetHospital: detectedHospital,
+              hasHospitalColumn,
               rows,
               headerIndex,
               headerRow
@@ -772,6 +1141,26 @@ export function Surgeries() {
               saveMappingToLocal(pattern, activeMapping);
             }
           }
+
+          // Se activeMapping foi recuperado, mas contém valores duplicados ou vazios, aplica a correção on-the-fly
+          if (activeMapping) {
+            const feesPaidCol = activeMapping['feesPaid'];
+            const receivedCol = activeMapping['receivedAmount'];
+            
+            if (feesPaidCol && (feesPaidCol === receivedCol || !receivedCol)) {
+              const fIdx = firstSheetHeaders.indexOf(feesPaidCol);
+              if (fIdx !== -1 && fIdx + 1 < firstSheetHeaders.length) {
+                const rightH = firstSheetHeaders[fIdx + 1];
+                if (rightH) {
+                  activeMapping['receivedAmount'] = rightH;
+                  saveMappingToLocal(pattern, activeMapping);
+                  if (user?.uid) {
+                    await saveMappingToCloud(user.uid, pattern, activeMapping, 'surgeries');
+                  }
+                }
+              }
+            }
+          }
           
           // 3. Tentar auto-sugestão fuzzy
           let needsCalibration = false;
@@ -793,7 +1182,11 @@ export function Surgeries() {
             setIsCalibrationOpen(true);
             setIsImporting(false);
           } else {
-            processExcelWithOptions(activeMapping, excelSheetsData);
+            if (isReconcile) {
+              processReconciliationWithOptions(activeMapping, excelSheetsData);
+            } else {
+              processExcelWithOptions(activeMapping, excelSheetsData);
+            }
           }
 
         } catch (err) {
@@ -805,6 +1198,7 @@ export function Surgeries() {
     };
     reader.readAsArrayBuffer(file);
     if (excelInputRef.current) excelInputRef.current.value = '';
+    if (reconcileInputRef.current) reconcileInputRef.current.value = '';
   };
 
   const handlePasteProcess = () => {
@@ -843,6 +1237,9 @@ export function Surgeries() {
       toast.error('Erro ao processar. Copie as células diretamente do Excel.');
     }
   };
+
+
+
 
   const handleExcelExport = (type: 'current' | 'all') => {
     const listToExport = type === 'current' ? filteredSurgeries : data.surgeries;
@@ -913,8 +1310,8 @@ export function Surgeries() {
     // Check for duplicate in manual entry too
     const isDuplicate = data.surgeries.some(existing => 
       existing.date === date && 
-      existing.patientName.toLowerCase().trim() === patientName.toLowerCase().trim() &&
-      existing.procedure.toLowerCase().trim() === procedure.toLowerCase().trim()
+      (existing.patientName || '').toLowerCase().trim() === (patientName || '').toLowerCase().trim() &&
+      (existing.procedure || '').toLowerCase().trim() === (procedure || '').toLowerCase().trim()
     );
 
     if (isDuplicate && !draftSurgery.id) {
@@ -923,7 +1320,7 @@ export function Surgeries() {
 
     if (draftSurgery.id) {
       const existing = data.surgeries?.find(s => s.id === draftSurgery.id);
-      updateSurgery(draftSurgery.id, { 
+      const updatePayload = { 
         date, 
         patientName, 
         indication, 
@@ -934,9 +1331,14 @@ export function Surgeries() {
         feesPaid, 
         receivedAmount, 
         hospitalId, 
-        notes: '',
+        notes: existing?.notes || '',
         aiSourceHash: draftSurgery.aiSourceHash || existing?.aiSourceHash || ''
-      });
+      };
+      
+      console.log("PAYLOAD ENVIADO (Update Surgery):", updatePayload);
+      toast.info(`Enviando update: ${JSON.stringify(updatePayload).substring(0, 80)}...`);
+
+      updateSurgery(draftSurgery.id, updatePayload);
       toast.success("Cirurgia atualizada com sucesso!");
     } else {
       addSurgery({ 
@@ -985,7 +1387,14 @@ export function Surgeries() {
   };
 
   const filteredSurgeries = React.useMemo(() => data.surgeries
-    .filter(s => activeHospitalId === 'ALL' || s.hospitalId === activeHospitalId)
+    .filter(s => {
+      if (activeHospitalId === 'ALL') return true;
+      if (activeHospitalId === 'NO_HOSPITAL') {
+        const hasValidHospital = s.hospitalId && data.hospitals.some(h => h.id === s.hospitalId);
+        return !hasValidHospital;
+      }
+      return s.hospitalId === activeHospitalId;
+    })
     .filter(s => {
       const term = searchTerm.toLowerCase();
       const hosp = data.hospitals.find(h => h.id === s.hospitalId);
@@ -1030,7 +1439,8 @@ export function Surgeries() {
       >
         <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleCapture} />
         <input type="file" accept="image/*,application/pdf" ref={fileInputRef} className="hidden" multiple onChange={handleCapture} />
-        <input type="file" accept=".xlsx, .xls" ref={excelInputRef} className="hidden" onChange={handleExcelImport} />
+        <input type="file" accept=".xlsx, .xls" ref={excelInputRef} className="hidden" onChange={(e) => handleFileSelect(e, false)} />
+        <input type="file" accept=".xlsx, .xls" ref={reconcileInputRef} className="hidden" onChange={(e) => handleFileSelect(e, true)} />
         <input type="file" accept="image/*" ref={photoInputRef} className="hidden" multiple onChange={handlePhotoUpload} />
         <input type="file" accept="image/*" capture="environment" ref={photoCameraInputRef} className="hidden" onChange={handlePhotoUpload} />
         
@@ -1038,19 +1448,13 @@ export function Surgeries() {
            <button 
              onClick={() => excelInputRef.current?.click()} 
              className="flex items-center justify-center gap-2 bg-white text-zinc-700 px-3 md:px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-tight transition-all shadow-sm hover:shadow-md active:scale-95 border border-zinc-100"
-             title="Importar Excel"
+             title="Importar Excel Inicial"
            >
               <span className="action-dot" />
-              <span>Excel</span>
+              <span>Importar Excel</span>
            </button>
-           <button 
-             onClick={() => setIsPasteModalOpen(true)} 
-             className="flex items-center justify-center gap-2 bg-white text-zinc-700 px-3 md:px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-tight transition-all shadow-sm hover:shadow-md active:scale-95 border border-zinc-100"
-             title="Colar do Excel"
-           >
-              <span className="action-dot" />
-              <span>Colar</span>
-           </button>
+
+
            <button 
              onClick={() => fileInputRef.current?.click()} 
              className="flex items-center justify-center gap-2 bg-white text-zinc-700 px-3 md:px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-tight transition-all shadow-sm hover:shadow-md active:scale-95 border border-zinc-100"
@@ -1270,6 +1674,14 @@ export function Surgeries() {
             >
               Todos
             </button>
+            {data.surgeries.some(s => !s.hospitalId || !data.hospitals.some(h => h.id === s.hospitalId)) && (
+              <button
+                onClick={() => setActiveHospitalId('NO_HOSPITAL')}
+                className={`px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all whitespace-nowrap border ${activeHospitalId === 'NO_HOSPITAL' ? 'bg-[#162744] text-white border-[#162744] shadow-xl shadow-zinc-200 scale-[1.02]' : 'bg-white text-zinc-400 border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50'}`}
+              >
+                Sem Hospital
+              </button>
+            )}
             {data.hospitals.map(h => (
               <button
                 key={h.id}
@@ -1310,6 +1722,7 @@ export function Surgeries() {
                 <thead style={{ background: "#F8F9FC" }}>
                    <tr style={{ background: "#F8F9FC" }}>
                       <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Paciente</th>
+                      <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Hospital</th>
                       <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Convênio</th>
                       <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Atendimento</th>
                       <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Cirurgia</th>
@@ -1331,6 +1744,9 @@ export function Surgeries() {
                     >
                       <td style={{ padding: "12px 14px" }}>
                          <div className="text-[12px] font-bold text-zinc-800 uppercase tracking-tight truncate max-w-[100px] md:max-w-[150px]">{surgery.patientName}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px", fontSize: 10, textTransform: "uppercase", color: "#505A70", fontWeight: 700 }}>
+                         <div className="truncate max-w-[120px] md:max-w-[150px]" title={data.hospitals.find(h => h.id === surgery.hospitalId)?.name || '---'}>{data.hospitals.find(h => h.id === surgery.hospitalId)?.name || '---'}</div>
                       </td>
                       <td style={{ padding: "12px 14px", fontSize: 10, textTransform: "uppercase", color: "#3D4A63", fontWeight: 700 }}>{surgery.insurance || '---'}</td>
                       <td style={{ padding: "12px 14px", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: "#8592A6" }}>{surgery.attendance || '---'}</td>
@@ -1400,7 +1816,7 @@ export function Surgeries() {
                     </tr>
                   ))}
                   {filteredSurgeries.length === 0 && (
-                    <tr><td colSpan={8} className="p-12 text-center text-zinc-300 italic text-[11px]">Nenhuma cirurgia registrada para este filtro.</td></tr>
+                    <tr><td colSpan={10} className="p-12 text-center text-zinc-300 italic text-[11px]">Nenhuma cirurgia registrada para este filtro.</td></tr>
                   )}
                 </tbody>
              </table>
@@ -2185,6 +2601,93 @@ export function Surgeries() {
         </div>
       </Dialog>
 
+      <Dialog isOpen={reconciliationState?.isOpen || false} onClose={() => setReconciliationState(null)} title="Confirmar Reconciliação Excel" size="xl">
+         <div className="p-4 space-y-6">
+            <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 mb-6">
+               <h3 className="text-xl font-black text-zinc-900 mb-2">Resumo da Reconciliação</h3>
+               <p className="text-[11px] text-zinc-500 uppercase tracking-widest font-bold mb-4">
+                  Analise o impacto abaixo antes de confirmar a importação
+               </p>
+
+               <div className="grid grid-cols-3 gap-4">
+                 <div className="bg-white p-4 border border-emerald-100 rounded-xl text-center">
+                    <div className="text-2xl font-black text-emerald-600">{reconciliationState?.newSurgeries?.length || 0}</div>
+                    <div className="text-[9px] uppercase tracking-widest text-emerald-500 font-bold mt-1">Registros Novos</div>
+                 </div>
+                 <div className="bg-white p-4 border border-blue-100 rounded-xl text-center">
+                    <div className="text-2xl font-black text-blue-600">{reconciliationState?.updatedSurgeries?.length || 0}</div>
+                    <div className="text-[9px] uppercase tracking-widest text-blue-500 font-bold mt-1">Serão Atualizados</div>
+                 </div>
+                 <div className="bg-white p-4 border border-zinc-200 rounded-xl text-center">
+                    <div className="text-2xl font-black text-zinc-400">{reconciliationState?.unchangedCount || 0}</div>
+                    <div className="text-[9px] uppercase tracking-widest text-zinc-400 font-bold mt-1">Sem Alteração</div>
+                 </div>
+               </div>
+            </div>
+
+            <div className="flex gap-3">
+               <button onClick={() => setReconciliationState(null)} className="flex-1 py-4 bg-zinc-100 text-zinc-600 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-zinc-200 transition-colors">
+                  Cancelar
+               </button>
+               <button 
+                  onClick={() => {
+                     if (!reconciliationState) return;
+                     setIsProcessing(true);
+                     try {
+                        const { newSurgeries, updatedSurgeries } = reconciliationState;
+                        
+                        const resolveHospital = async (s: any, cache: Map<string, string>) => {
+                          let finalHospitalId = s.hospitalId;
+                          if (finalHospitalId?.startsWith('NEW:')) {
+                            const hospitalName = s.hospitalName || '';
+                            const lowerName = hospitalName.toLowerCase().trim();
+                            const existing = data.hospitals.find(x => matchHospitalFlexible(x.name, hospitalName));
+                            if (existing) {
+                              finalHospitalId = existing.id;
+                            } else if (cache.has(lowerName)) {
+                              finalHospitalId = cache.get(lowerName)!;
+                            } else {
+                              const newHospId = crypto.randomUUID();
+                              addHospital({ // using contextual addHospital doesn't need await since the queue handles it via Promise or sync state
+                                id: newHospId,
+                                name: hospitalName
+                              });
+                              cache.set(lowerName, newHospId);
+                              finalHospitalId = newHospId;
+                            }
+                          }
+                          return finalHospitalId;
+                        };
+
+                        const createdHospitalsCache = new Map<string, string>();
+
+                        newSurgeries.forEach(async (s) => {
+                           const hospitalId = await resolveHospital(s, createdHospitalsCache);
+                           addSurgery({ ...s, hospitalId });
+                        });
+                        
+                        updatedSurgeries.forEach(async (s) => {
+                           const hospitalId = await resolveHospital(s.updates, createdHospitalsCache);
+                           updateSurgery(s.id, { ...s.updates, hospitalId });
+                        });
+                        
+                        toast.success(`Reconciliação iniciada! ${newSurgeries.length} novos, ${updatedSurgeries.length} atualizados.`);
+                        setReconciliationState(null);
+                     } catch (e) {
+                        toast.error("Erro ao aplicar reconciliação.");
+                     } finally {
+                        setIsProcessing(false);
+                     }
+                  }} 
+                  className="flex-[2] py-4 bg-[#162744] text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-xl shadow-zinc-200 hover:bg-[#0f1b32] transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+               >
+                  <span className="action-dot" />
+                  Confirmar Reconciliação
+               </button>
+            </div>
+         </div>
+      </Dialog>
+
       <AnimatePresence>
         {isFullscreen && (
           <motion.div 
@@ -2320,6 +2823,8 @@ export function Surgeries() {
           </motion.div>
         )}
       </AnimatePresence>
+
+
     </div>
   );
 }

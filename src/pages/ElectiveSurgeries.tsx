@@ -50,8 +50,8 @@ export function ElectiveSurgeries() {
       // Try to find hospital by name if available
       let hospitalId = '';
       if (extracted.hospital && data.hospitals) {
-        const hName = extracted.hospital.toLowerCase();
-        const found = data.hospitals.find(h => h.name.toLowerCase().includes(hName) || hName.includes(h.name.toLowerCase()));
+        const hName = (extracted.hospital || '').toLowerCase();
+        const found = data.hospitals.find(h => (h.name || '').toLowerCase().includes(hName) || hName.includes((h.name || '').toLowerCase()));
         if (found) hospitalId = found.id;
       }
 

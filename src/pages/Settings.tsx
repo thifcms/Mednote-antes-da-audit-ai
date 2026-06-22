@@ -52,7 +52,7 @@ export function Settings() {
   };
 
   const syncHospitalAsPayer = (hospitalName: string) => {
-    const exists = data.payers.some(p => p.customName.toLowerCase() === hospitalName.toLowerCase());
+    const exists = data.payers.some(p => (p.customName || '').toLowerCase() === (hospitalName || '').toLowerCase());
     if (!exists) {
       addPayer({ customName: hospitalName, aliases: [hospitalName] });
     }
@@ -253,41 +253,54 @@ export function Settings() {
               ) : (
                 data.hospitals.map(hospital => (
                   <div key={hospital.id} className="flex items-center justify-between p-4 border border-zinc-100 rounded-xl bg-zinc-50 group hover:border-zinc-300 transition-colors">
-                    <div className="flex flex-col flex-1">
+                    <div className="flex flex-col flex-1 mr-4">
                       {editingHospitalId === hospital.id ? (
                         <input 
                           value={editHospitalName}
                           onChange={(e) => setEditHospitalName(e.target.value)}
                           onBlur={() => {
-                            updateHospital(hospital.id, { name: editHospitalName });
+                            if (editHospitalName.trim()) {
+                              updateHospital(hospital.id, { name: editHospitalName.trim() });
+                            }
                             setEditingHospitalId(null);
                           }}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              if (editHospitalName.trim()) {
+                                updateHospital(hospital.id, { name: editHospitalName.trim() });
+                              }
+                              setEditingHospitalId(null);
+                            }
+                          }}
                           className="font-black text-zinc-700 text-[10px] uppercase tracking-widest bg-transparent border-b border-zinc-300 outline-none w-full"
+                          autoFocus
                         />
                       ) : (
                         <span className="font-black text-zinc-700 text-[10px] uppercase tracking-widest">{hospital.name}</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       <button 
                         onClick={() => {
                           setEditingHospitalId(hospital.id);
                           setEditHospitalName(hospital.name);
                         }}
-                        className="text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-zinc-900 transition-all p-1"
+                        className="text-zinc-500 hover:text-[#B8962E] transition-all p-1.5 bg-white rounded-full border border-zinc-200 flex items-center justify-center cursor-pointer shadow-sm"
+                        title="Editar Hospital"
                       >
-                        <Pencil className="w-3.5 h-3.5" />
+                        <Pencil className="w-3 h-3" />
                       </button>
                       <button 
                         onClick={() => syncHospitalAsPayer(hospital.name)}
                         title="Usar também como Fonte Pagadora"
-                        className="text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-zinc-900 transition-all p-1"
+                        className="text-zinc-500 hover:text-zinc-800 transition-all p-1.5 bg-white rounded-full border border-zinc-200 flex items-center justify-center cursor-pointer shadow-sm"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" />
+                        <RotateCcw className="w-3 h-3" />
                       </button>
                       <button 
                         onClick={() => deleteHospital(hospital.id)}
-                        className="text-zinc-400 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all p-1"
+                        className="text-zinc-400 hover:text-red-500 transition-all p-1.5 bg-red-50/50 hover:bg-red-50 rounded-full border border-red-100 flex items-center justify-center cursor-pointer"
+                        title="Excluir Hospital"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

@@ -128,7 +128,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidInvoice(incoming());
         allow update: if isOwner(userId) && isValidInvoice(incoming()) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'grossAmount', 'netAmount', 'description', 'noteNumber', 'hospitalId', 'mappedPayerId', 'year', 'month', 'amount', 'emissionDayMonth', 'originalPayerName', 'hospitalName', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'grossAmount', 'netAmount', 'description', 'noteNumber', 'hospitalId', 'mappedPayerId', 'year', 'month', 'amount', 'emissionDayMonth', 'originalPayerName', 'hospitalName', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -137,7 +137,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidSurgery(incoming());
         allow update: if isOwner(userId) && isValidSurgery(incoming()) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'indication', 'insurance', 'attendance', 'company', 'feesPaid', 'receivedAmount', 'hospitalId', 'hospitalName', 'notes', 'isParticular', 'particularValue', 'photos', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'indication', 'insurance', 'attendance', 'company', 'feesPaid', 'receivedAmount', 'hospitalId', 'hospitalName', 'notes', 'isParticular', 'particularValue', 'photos', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -146,7 +146,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidElectiveSurgery(incoming());
         allow update: if isOwner(userId) && isValidElectiveSurgery(incoming()) &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -155,7 +155,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidSurgeryTemplate(incoming());
         allow update: if isOwner(userId) && isValidSurgeryTemplate(incoming()) &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['diagnosis', 'procedure', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['diagnosis', 'procedure', 'userId', 'createdAt', 'id', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -164,7 +164,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidExcelMapping(incoming());
         allow update: if isOwner(userId) && isValidExcelMapping(incoming()) &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['headersPattern', 'mapping', 'sheetType', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['headersPattern', 'mapping', 'sheetType', 'userId', 'createdAt', 'id', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -173,7 +173,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidPayment(incoming());
         allow update: if isOwner(userId) && isValidPayment(incoming()) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'amount', 'description', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'amount', 'description', 'userId', 'createdAt', 'id', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -182,7 +182,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidHospital(incoming());
         allow update: if isOwner(userId) && isValidHospital(incoming()) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['name', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['name', 'userId', 'createdAt', 'id', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -191,7 +191,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidPayer(incoming());
         allow update: if isOwner(userId) && isValidPayer(incoming()) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['customName', 'aliases', 'userId', 'createdAt', 'id']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['customName', 'aliases', 'userId', 'createdAt', 'id', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
     }

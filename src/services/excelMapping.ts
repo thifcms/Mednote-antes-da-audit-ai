@@ -75,29 +75,105 @@ export function suggestAutoMapping(headers: string[], fieldDefs: FieldDefinition
   const mapping: Record<string, string> = {};
   let allRequiredMet = true;
   
-  for (const field of fieldDefs) {
-    let bestHeader = '';
-    let bestScore = 0;
+  // 1. Calcular pontuações de correspondência para todos os pares possíveis (campo, cabeçalho)
+  const scoreMatrix: { fieldKey: string; header: string; headerIndex: number; score: number }[] = [];
+  
+  headers.forEach((h, hIdx) => {
+    if (!h) return;
+    const hStr = String(h).trim();
+    if (!hStr) return;
     
-    for (const h of headers) {
-      if (!h) continue;
-      const score = calculateFuzzyScore(h, field.keywords);
-      if (score > bestScore) {
-        bestScore = score;
-        bestHeader = h;
+    fieldDefs.forEach(field => {
+      let score = calculateFuzzyScore(hStr, field.keywords);
+      
+      // Ajustes específicos baseados em nomes reais de abas e colunas
+      const hNorm = hStr.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      if (field.key === 'receivedAmount') {
+        if (hNorm === 'valor' || hNorm === 'valor (1/2)' || hNorm === 'recebidos' || hNorm === 'pago') {
+          score = Math.max(score, 95);
+        } else if (hNorm.includes('valor (1/2)') || hNorm.includes('pago (1/2)')) {
+          score = Math.max(score, 90);
+        }
+      }
+      
+      if (field.key === 'feesPaid') {
+        if (hNorm === 'valor pago (honorarios)' || hNorm === 'valor pago' || hNorm === 'honorários' || hNorm === 'honorarios') {
+          score = Math.max(score, 95);
+        }
+      }
+
+      if (score >= 40) {
+        scoreMatrix.push({ fieldKey: field.key, header: hStr, headerIndex: hIdx, score });
+      }
+    });
+  });
+
+  // Ordenar pontuações em ordem decrescente
+  scoreMatrix.sort((a, b) => b.score - a.score);
+
+  const mappedFields = new Set<string>();
+  const mappedHeaders = new Set<string>();
+
+  // 2. Mapeamento guloso único para garantir que uma coluna não seja atribuída a mais de um campo
+  scoreMatrix.forEach(entry => {
+    if (!mappedFields.has(entry.fieldKey) && !mappedHeaders.has(entry.header)) {
+      mapping[entry.fieldKey] = entry.header;
+      mappedFields.add(entry.fieldKey);
+      mappedHeaders.add(entry.header);
+    }
+  });
+
+  // 3. Regra sequencial especial do usuário:
+  // Se "feesPaid" (Honorários) foi mapeado, e a coluna imediatamente à direita (index + 1) existe e
+  // não está mapeada para nenhum campo obrigatório importante (como paciente, data, procedimento),
+  // e o "receivedAmount" (Valor da Nota) não possui mapeamento forte (score >= 90),
+  // associamos o "receivedAmount" à coluna à direita.
+  if (mappedFields.has('feesPaid')) {
+    const feesPaidHeader = mapping['feesPaid'];
+    const feesPaidIdx = headers.indexOf(feesPaidHeader);
+    
+    if (feesPaidIdx !== -1 && feesPaidIdx + 1 < headers.length) {
+      const rightHeader = headers[feesPaidIdx + 1];
+      if (rightHeader) {
+        const rightHeaderLower = String(rightHeader).toLowerCase().trim();
+        // Verifica se é uma coluna candidata a valor financeiro
+        const isFinancialRel = rightHeaderLower === 'valor' || 
+                              rightHeaderLower.includes('1/2') || 
+                              rightHeaderLower.includes('valor') || 
+                              rightHeaderLower.includes('pago') || 
+                              rightHeaderLower.includes('recebi') ||
+                              rightHeaderLower.includes('liquido');
+                              
+        if (isFinancialRel) {
+          const currentReceivedHeader = mapping['receivedAmount'];
+          const currentReceivedScore = currentReceivedHeader ? calculateFuzzyScore(currentReceivedHeader, fieldDefs.find(f => f.key === 'receivedAmount')!.keywords) : 0;
+          
+          const targetRequiredFields = ['patientName', 'date', 'procedure'];
+          const rightAssignedToRequired = targetRequiredFields.some(k => mapping[k] === rightHeader);
+          
+          if (!rightAssignedToRequired && (!currentReceivedHeader || currentReceivedScore < 90)) {
+            if (currentReceivedHeader) {
+              mappedHeaders.delete(currentReceivedHeader);
+            }
+            mapping['receivedAmount'] = rightHeader;
+            mappedFields.add('receivedAmount');
+            mappedHeaders.add(rightHeader);
+          }
+        }
       }
     }
-    
-    if (bestScore >= 50) { 
-      mapping[field.key] = bestHeader;
-    } else {
+  }
+
+  // 4. Preencher com string vazia campos que não obtiveram mapeamento
+  fieldDefs.forEach(field => {
+    if (!mapping[field.key]) {
       mapping[field.key] = '';
       if (field.required) {
         allRequiredMet = false;
       }
     }
-  }
-  
+  });
+
   return { mapping, confidence: allRequiredMet };
 }
 

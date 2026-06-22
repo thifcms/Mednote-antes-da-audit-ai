@@ -360,6 +360,12 @@ export function Invoices() {
         const { sheetName, rows, headerIndex, headerRow } = sheet;
         
         const mappedData = rows.slice(headerIndex + 1).map(r => {
+          if (!r || !Array.isArray(r)) return null;
+          
+          // Verifica se a linha está totalmente vazia
+          const isEmpty = r.every(cell => cell === undefined || cell === null || String(cell).trim() === "");
+          if (isEmpty) return null;
+
           const obj: any = {};
           
           Object.entries(mapping).forEach(([systemKey, excelHeader]) => {
@@ -377,7 +383,8 @@ export function Invoices() {
           
           obj['_SheetName'] = sheetName;
           return obj;
-        }).filter(obj => {
+        }).filter(Boolean).filter(obj => {
+          if (!obj) return false;
           const values = Object.entries(obj)
             .filter(([key]) => key !== '_SheetName')
             .map(([_, v]) => v);
@@ -436,9 +443,29 @@ export function Invoices() {
           
           for (const sheetName of wb.SheetNames) {
             const ws = wb.Sheets[sheetName];
-            const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+            let rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, blankrows: true });
             if (rows.length === 0) continue;
             
+            // Trunca as linhas apenas se houver 5 ou mais vazias seguidas
+            let consecutiveEmptyCount = 0;
+            let truncateIndex = rows.length;
+            
+            for (let i = 0; i < rows.length; i++) {
+              const row = rows[i];
+              const isEmpty = !row || !Array.isArray(row) || row.every(cell => cell === undefined || cell === null || String(cell).trim() === "");
+              if (isEmpty) {
+                consecutiveEmptyCount++;
+                if (consecutiveEmptyCount >= 5) {
+                  truncateIndex = i - 4;
+                  break;
+                }
+              } else {
+                consecutiveEmptyCount = 0;
+              }
+            }
+            
+            rows = rows.slice(0, truncateIndex);
+
             const { headerIndex, headerRow } = findExcelHeaderRow(rows, [
               'Ano', 'Mês', 'Mes', 'Nº Nota', 'NÚMERO DA NOTA', 'Nota', 'Emissão', 'EMITIDA EM', 'Emissao', 'emitida em', 'emitida', 'emitida data', 'data da emissao', 'Bruto', 'VALOR BRUTO', 'Líquido', 'VALOR LIQUIDO', 'Liquido', 'Valor', 'VALORES RECEBIDOS', 'DATA DO RECEBIMENTO'
             ]);
@@ -689,7 +716,7 @@ export function Invoices() {
       const isDuplicate = currentPayments.some(existing => 
         existing.date === pay.date && 
         existing.amount === pay.amount &&
-        existing.description.toLowerCase().trim() === pay.description.toLowerCase().trim()
+        (existing.description || '').toLowerCase().trim() === (pay.description || '').toLowerCase().trim()
       );
 
       if (isDuplicate) {

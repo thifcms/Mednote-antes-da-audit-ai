@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { 
@@ -266,9 +266,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
   const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+  const syncQueueRef = useRef(syncQueue);
 
   useEffect(() => {
     localStorage.setItem('local_sync_queue', JSON.stringify(syncQueue));
+    syncQueueRef.current = syncQueue;
   }, [syncQueue]);
 
   const [accessToken, setAccessToken] = useState<string | null>(sessionStorage.getItem('drive_access_token'));
@@ -349,10 +351,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (err.message && (err.message.includes('permission') || err.message.includes('unauthorized'))) {
           // Erro de segurança permanente, remove da fila para não travá-la
           console.error("Fila: sem permissão para item, pulando.", item);
+          console.error("Detalhes do erro:", err.message);
+          toast.error(`Falha de segurança ao sincronizar com servidor: ${err.message}`);
           completedCount++;
         } else {
           // Erro temporário de rede, para processamento para tentar mais tarde mantendo a ordem
           console.warn("Fila: instabilidade de rede temporária na fila, reagendando.", err);
+          toast.error(`Erro de rede ao sincronizar: ${err.message}`);
           break;
         }
       }
@@ -421,12 +426,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const unsubs = collections.map(col => 
       onSnapshot(collection(db, 'users', user.uid, col.name), { includeMetadataChanges: true }, (snap) => {
-        setIsSyncing(snap.metadata.hasPendingWrites || syncQueue.some(q => q.collection === col.name));
+        setIsSyncing(snap.metadata.hasPendingWrites || syncQueueRef.current.some(q => q.collection === col.name));
         const cloudItems = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
         
+        if (col.name === 'surgeries') {
+          console.log("-> onSnapshot fired for surgeries:", {
+            hasPendingWrites: snap.metadata.hasPendingWrites,
+            fromCache: snap.metadata.fromCache,
+            queueLength: syncQueueRef.current.length,
+            sample: cloudItems[0]
+          });
+        }
+
         setData(prev => {
           const merged = [...cloudItems];
-          const colQueue = syncQueue.filter(q => q.collection === col.name);
+          const colQueue = syncQueueRef.current.filter(q => q.collection === col.name);
           colQueue.forEach(item => {
             if (item.action === 'create' || item.action === 'update') {
               const idx = merged.findIndex(x => x.id === item.docId);
@@ -459,7 +473,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       unsubSettings();
       unsubs.forEach(unsub => unsub());
     };
-  }, [user, syncQueue.length]);
+  }, [user]);
 
   const signIn = async () => {
     return signInWithGoogle();
