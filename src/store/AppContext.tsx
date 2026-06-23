@@ -883,19 +883,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const desc = descriptionStr || '';
       let mappedPayer = 'N/A';
       let reference = '';
-      const foundPayer = appData.payers.find(payer => {
-        const mainName = payer.customName.toLowerCase();
+      const payersList = appData.payers || [];
+      const foundPayer = payersList.find(payer => {
+        const mainName = (payer.customName || '').toLowerCase();
+        if (!mainName) return false;
         const matchesMain = desc.toLowerCase().includes(mainName);
-        const matchesAlias = payer.aliases.some(alias => desc.toLowerCase().includes(alias.toLowerCase()));
+        const matchesAlias = (payer.aliases || []).some(alias => {
+          const lowerAlias = (alias || '').toLowerCase();
+          return lowerAlias && desc.toLowerCase().includes(lowerAlias);
+        });
         return matchesMain || matchesAlias;
       });
       if (foundPayer) {
         mappedPayer = foundPayer.customName;
-        const payerNameRegex = new RegExp(foundPayer.customName, 'gi');
+        const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const payerNameRegex = new RegExp(escapeRegExp(foundPayer.customName || ''), 'gi');
         let baseRef = desc.replace(payerNameRegex, '').trim();
-        foundPayer.aliases.forEach(alias => {
-          const aliasRegex = new RegExp(alias, 'gi');
-          baseRef = baseRef.replace(aliasRegex, '').trim();
+        (foundPayer.aliases || []).forEach(alias => {
+          if (alias) {
+            const aliasRegex = new RegExp(escapeRegExp(alias), 'gi');
+            baseRef = baseRef.replace(aliasRegex, '').trim();
+          }
         });
         reference = baseRef || 'Mensal';
       } else {
@@ -912,6 +920,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
 
     // 1. Cirurgias Realizadas — uma aba por hospital
+    const setColWidths = (ws: any, headers: string[]) => {
+      ws['!cols'] = headers.map(h => {
+        const lowerH = h.toLowerCase();
+        let w = 15; // default fallback
+        
+        if (
+          lowerH.includes('paciente') || 
+          lowerH.includes('procedimento') || 
+          lowerH.includes('descrição') || 
+          lowerH.includes('descricao')
+        ) {
+          w = 35;
+        } else if (
+          lowerH.includes('hospital') || 
+          lowerH.includes('fonte pagadora') || 
+          lowerH.includes('convênio') || 
+          lowerH.includes('convenio') || 
+          lowerH.includes('pagadora')
+        ) {
+          w = 25;
+        } else if (
+          lowerH.includes('data') || 
+          lowerH.includes('status') || 
+          lowerH.includes('referência') || 
+          lowerH.includes('referencia')
+        ) {
+          w = 15;
+        } else if (
+          lowerH.includes('atendimento') || 
+          lowerH.includes('nota') || 
+          lowerH.includes('número') || 
+          lowerH.includes('numero') || 
+          lowerH.includes('nº')
+        ) {
+          w = 18;
+        } else if (
+          lowerH.includes('honorários') || 
+          lowerH.includes('honorarios') || 
+          lowerH.includes('recebido') || 
+          lowerH.includes('bruto') || 
+          lowerH.includes('líquido') || 
+          lowerH.includes('liquido') || 
+          lowerH.includes('valor')
+        ) {
+          w = 18;
+        }
+        return { wch: w };
+      });
+    };
+
     const realizedByHospital: Record<string, typeof appData.surgeries> = {};
     appData.surgeries.forEach(s => {
       const hospName = getHospitalName(s.hospitalId);
@@ -923,6 +981,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const sortedRealizedHospitals = Object.keys(realizedByHospital).sort();
     sortedRealizedHospitals.forEach(hName => {
+      const headers = ['Paciente', 'Nº Atendimento', 'Convênio', 'Data da Cirurgia', 'Procedimento', 'Honorários (R$)', 'Valor Recebido (R$)', 'Status'];
       const sheetData = realizedByHospital[hName].map(s => ({
         'Paciente': s.patientName || '',
         'Nº Atendimento': s.attendance || '',
@@ -934,6 +993,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         'Status': s.receivedAmount >= s.feesPaid ? 'Pago' : (s.receivedAmount > 0 ? 'Parcial' : 'Pendente')
       }));
       const ws = utils.json_to_sheet(sheetData);
+      setColWidths(ws, headers);
       const cleanName = getUniqueCleanSheetName(hName, '');
       utils.book_append_sheet(wb, ws, cleanName);
     });
@@ -950,6 +1010,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const sortedRequestedHospitals = Object.keys(requestedByHospital).sort();
     sortedRequestedHospitals.forEach(hName => {
+      const headers = ['Paciente', 'Convênio', 'Data Solicitada', 'Procedimento', 'Hospital', 'Status'];
       const sheetData = requestedByHospital[hName].map(s => ({
         'Paciente': s.patientName || '',
         'Convênio': s.isParticular ? 'Particular' : 'CONVÊNIO',
@@ -959,11 +1020,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         'Status': 'Solicitada'
       }));
       const ws = utils.json_to_sheet(sheetData);
+      setColWidths(ws, headers);
       const cleanName = getUniqueCleanSheetName(hName, ' (Sol.)');
       utils.book_append_sheet(wb, ws, cleanName);
     });
 
     // 3. Recebimentos
+    const paymentsHeaders = ['Data', 'Fonte Pagadora', 'Valor', 'Descrição', 'Referência'];
     const paymentsSheetData = (appData.payments || []).map(p => {
       const { mappedPayer, reference } = matchPayerAndRef(p.description);
       return {
@@ -975,9 +1038,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
     });
     const wsPayments = utils.json_to_sheet(paymentsSheetData);
+    setColWidths(wsPayments, paymentsHeaders);
     utils.book_append_sheet(wb, wsPayments, "Recebimentos");
 
     // 4. Notas Fiscais
+    const invoicesHeaders = ['Número da Nota', 'Data Emissão', 'Fonte Pagadora', 'Valor Bruto', 'Valor Líquido', 'Descrição'];
     const invoicesSheetData = (appData.invoices || []).map(i => ({
       'Número da Nota': i.noteNumber || '',
       'Data Emissão': formatToBRDate(i.date),
@@ -987,9 +1052,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       'Descrição': i.description || ''
     }));
     const wsInvoices = utils.json_to_sheet(invoicesSheetData);
+    setColWidths(wsInvoices, invoicesHeaders);
     utils.book_append_sheet(wb, wsInvoices, "Notas Fiscais");
 
     // 5. Resumo Geral
+    const summaryHeaders = ['Hospital', 'Paciente', 'Nº Atendimento', 'Convênio', 'Data da Cirurgia', 'Procedimento', 'Honorários (R$)', 'Valor Recebido (R$)', 'Status'];
     const summarySheetData = appData.surgeries.map(s => ({
       'Hospital': getHospitalName(s.hospitalId),
       'Paciente': s.patientName || '',
@@ -1002,6 +1069,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       'Status': s.receivedAmount >= s.feesPaid ? 'Pago' : (s.receivedAmount > 0 ? 'Parcial' : 'Pendente')
     }));
     const wsSummary = utils.json_to_sheet(summarySheetData);
+    setColWidths(wsSummary, summaryHeaders);
     utils.book_append_sheet(wb, wsSummary, "Resumo Geral");
 
     return wb;
