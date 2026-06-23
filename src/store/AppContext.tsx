@@ -829,82 +829,187 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const generateWorkbook = (appData: AppData) => {
+    const { utils } = XLSX;
+    const wb = utils.book_new();
+    const usedSheetNames = new Set<string>();
+
+    const formatToBRDate = (dateStr: string): string => {
+      if (!dateStr) return 'N/A';
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) return dateStr;
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        const [year, month, day] = parts;
+        if (year.length === 4) {
+          return `${day}/${month}/${year}`;
+        }
+      }
+      try {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+          const day = String(d.getDate()).padStart(2, '0');
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const year = d.getFullYear();
+          return `${day}/${month}/${year}`;
+        }
+      } catch (e) {}
+      return dateStr;
+    };
+
+    const getUniqueCleanSheetName = (preferredName: string, suffix: string): string => {
+      let cleaned = preferredName.replace(/[\\/?*:[\]]/g, '').trim();
+      cleaned = cleaned.replace(/^'+|'+$/g, '').trim();
+      if (!cleaned) cleaned = 'Aba';
+      const maxBaseLen = 31 - suffix.length;
+      let base = cleaned.substring(0, maxBaseLen).trim();
+      let candidate = (base + suffix).substring(0, 31);
+      let counter = 1;
+      while (usedSheetNames.has(candidate.toUpperCase())) {
+        const countSuffix = ` (${counter})`;
+        const adjustedMaxBaseLen = 31 - suffix.length - countSuffix.length;
+        let adjustedBase = cleaned.substring(0, adjustedMaxBaseLen).trim();
+        candidate = (adjustedBase + suffix + countSuffix).substring(0, 31);
+        counter++;
+      }
+      usedSheetNames.add(candidate.toUpperCase());
+      return candidate;
+    };
+
+    const getHospitalName = (hospitalId: string): string => {
+      return appData.hospitals.find(h => h.id === hospitalId)?.name || 'Sem Hospital';
+    };
+
+    const matchPayerAndRef = (descriptionStr: string) => {
+      const desc = descriptionStr || '';
+      let mappedPayer = 'N/A';
+      let reference = '';
+      const foundPayer = appData.payers.find(payer => {
+        const mainName = payer.customName.toLowerCase();
+        const matchesMain = desc.toLowerCase().includes(mainName);
+        const matchesAlias = payer.aliases.some(alias => desc.toLowerCase().includes(alias.toLowerCase()));
+        return matchesMain || matchesAlias;
+      });
+      if (foundPayer) {
+        mappedPayer = foundPayer.customName;
+        const payerNameRegex = new RegExp(foundPayer.customName, 'gi');
+        let baseRef = desc.replace(payerNameRegex, '').trim();
+        foundPayer.aliases.forEach(alias => {
+          const aliasRegex = new RegExp(alias, 'gi');
+          baseRef = baseRef.replace(aliasRegex, '').trim();
+        });
+        reference = baseRef || 'Mensal';
+      } else {
+        const parts = desc.trim().split(/\s+/);
+        if (parts.length > 1) {
+          mappedPayer = parts[0];
+          reference = parts.slice(1).join(' ');
+        } else {
+          mappedPayer = desc || 'N/A';
+          reference = 'Geral';
+        }
+      }
+      return { mappedPayer, reference };
+    };
+
+    // 1. Cirurgias Realizadas — uma aba por hospital
+    const realizedByHospital: Record<string, typeof appData.surgeries> = {};
+    appData.surgeries.forEach(s => {
+      const hospName = getHospitalName(s.hospitalId);
+      if (!realizedByHospital[hospName]) {
+        realizedByHospital[hospName] = [];
+      }
+      realizedByHospital[hospName].push(s);
+    });
+
+    const sortedRealizedHospitals = Object.keys(realizedByHospital).sort();
+    sortedRealizedHospitals.forEach(hName => {
+      const sheetData = realizedByHospital[hName].map(s => ({
+        'Paciente': s.patientName || '',
+        'Nº Atendimento': s.attendance || '',
+        'Convênio': s.insurance || '',
+        'Data da Cirurgia': formatToBRDate(s.date),
+        'Procedimento': s.procedure || '',
+        'Honorários (R$)': s.feesPaid || 0,
+        'Valor Recebido (R$)': s.receivedAmount || 0,
+        'Status': s.receivedAmount >= s.feesPaid ? 'Pago' : (s.receivedAmount > 0 ? 'Parcial' : 'Pendente')
+      }));
+      const ws = utils.json_to_sheet(sheetData);
+      const cleanName = getUniqueCleanSheetName(hName, '');
+      utils.book_append_sheet(wb, ws, cleanName);
+    });
+
+    // 2. Cirurgias Solicitadas — uma aba por hospital
+    const requestedByHospital: Record<string, typeof appData.electiveSurgeries> = {};
+    (appData.electiveSurgeries || []).forEach(s => {
+      const hospName = getHospitalName(s.hospitalId);
+      if (!requestedByHospital[hospName]) {
+        requestedByHospital[hospName] = [];
+      }
+      requestedByHospital[hospName].push(s);
+    });
+
+    const sortedRequestedHospitals = Object.keys(requestedByHospital).sort();
+    sortedRequestedHospitals.forEach(hName => {
+      const sheetData = requestedByHospital[hName].map(s => ({
+        'Paciente': s.patientName || '',
+        'Convênio': s.isParticular ? 'Particular' : 'CONVÊNIO',
+        'Data Solicitada': formatToBRDate(s.date),
+        'Procedimento': s.procedure || '',
+        'Hospital': hName,
+        'Status': 'Solicitada'
+      }));
+      const ws = utils.json_to_sheet(sheetData);
+      const cleanName = getUniqueCleanSheetName(hName, ' (Sol.)');
+      utils.book_append_sheet(wb, ws, cleanName);
+    });
+
+    // 3. Recebimentos
+    const paymentsSheetData = (appData.payments || []).map(p => {
+      const { mappedPayer, reference } = matchPayerAndRef(p.description);
+      return {
+        'Data': formatToBRDate(p.date),
+        'Fonte Pagadora': mappedPayer,
+        'Valor': p.amount || 0,
+        'Descrição': p.description || '',
+        'Referência': reference
+      };
+    });
+    const wsPayments = utils.json_to_sheet(paymentsSheetData);
+    utils.book_append_sheet(wb, wsPayments, "Recebimentos");
+
+    // 4. Notas Fiscais
+    const invoicesSheetData = (appData.invoices || []).map(i => ({
+      'Número da Nota': i.noteNumber || '',
+      'Data Emissão': formatToBRDate(i.date),
+      'Fonte Pagadora': appData.payers.find(p => p.id === i.mappedPayerId)?.customName || i.originalPayerName || 'N/A',
+      'Valor Bruto': i.grossAmount || 0,
+      'Valor Líquido': i.netAmount || 0,
+      'Descrição': i.description || ''
+    }));
+    const wsInvoices = utils.json_to_sheet(invoicesSheetData);
+    utils.book_append_sheet(wb, wsInvoices, "Notas Fiscais");
+
+    // 5. Resumo Geral
+    const summarySheetData = appData.surgeries.map(s => ({
+      'Hospital': getHospitalName(s.hospitalId),
+      'Paciente': s.patientName || '',
+      'Nº Atendimento': s.attendance || '',
+      'Convênio': s.insurance || '',
+      'Data da Cirurgia': formatToBRDate(s.date),
+      'Procedimento': s.procedure || '',
+      'Honorários (R$)': s.feesPaid || 0,
+      'Valor Recebido (R$)': s.receivedAmount || 0,
+      'Status': s.receivedAmount >= s.feesPaid ? 'Pago' : (s.receivedAmount > 0 ? 'Parcial' : 'Pendente')
+    }));
+    const wsSummary = utils.json_to_sheet(summarySheetData);
+    utils.book_append_sheet(wb, wsSummary, "Resumo Geral");
+
+    return wb;
+  };
+
   const exportToExcel = () => {
     try {
-      const { utils } = XLSX;
-      const wb = utils.book_new();
-
-      // 1. Cirurgias
-      const surgeriesData = data.surgeries.map(s => ({
-        Data: s.date,
-        Paciente: s.patientName,
-        Procedimento: s.procedure,
-        Indicação: s.indication || '',
-        Convênio: s.insurance,
-        Atendimento: s.attendance,
-        Empresa: s.company,
-        'Honorários Pagos': s.feesPaid,
-        'Valor Recebido': s.receivedAmount,
-        Hospital: data.hospitals.find(h => h.id === s.hospitalId)?.name || 'N/A',
-        Particular: s.isParticular ? 'Sim' : 'Não',
-        'Valor Particular': s.particularValue || 0,
-        Observações: s.notes || '',
-        'Data Criação': s.createdAt
-      }));
-      const wsSurgeries = utils.json_to_sheet(surgeriesData);
-      utils.book_append_sheet(wb, wsSurgeries, "Cirurgias Realizadas");
-
-      // 2. Cirurgias Eletivas
-      const electiveSurgeriesData = data.electiveSurgeries.map(s => ({
-        Data: s.date,
-        Paciente: s.patientName,
-        Procedimento: s.procedure,
-        Hospital: data.hospitals.find(h => h.id === s.hospitalId)?.name || 'N/A',
-        Particular: s.isParticular ? 'Sim' : 'Não',
-        'Valor Particular': s.particularValue || 0,
-        'Data Criação': s.createdAt
-      }));
-      const wsElectives = utils.json_to_sheet(electiveSurgeriesData);
-      utils.book_append_sheet(wb, wsElectives, "Eletivas Agendadas");
-
-      // 3. Notas Fiscais
-      const invoicesData = data.invoices.map(i => ({
-        Data: i.date,
-        'Emissão (Dia/Mês)': i.emissionDayMonth,
-        'Número da Nota': i.noteNumber,
-        'Valor Bruto': i.grossAmount,
-        'Valor Líquido': i.netAmount,
-        'Fonte Pagadora': data.payers.find(p => p.id === i.mappedPayerId)?.customName || i.originalPayerName || 'N/A',
-        Descrição: i.description || '',
-        'Data Criação': i.createdAt
-      }));
-      const wsInvoices = utils.json_to_sheet(invoicesData);
-      utils.book_append_sheet(wb, wsInvoices, "Notas Fiscais");
-
-      // 4. Pagamentos
-      const paymentsData = data.payments.map(p => ({
-        Data: p.date,
-        Valor: p.amount,
-        Descrição: p.description || '',
-        'Data Criação': p.createdAt
-      }));
-      const wsPayments = utils.json_to_sheet(paymentsData);
-      utils.book_append_sheet(wb, wsPayments, "Pagamentos");
-
-      // 5. Hospitais e Fontes
-      const hospitalsData = data.hospitals.map(h => ({ Nome: h.name, ID: h.id }));
-      const wsHospitals = utils.json_to_sheet(hospitalsData);
-      utils.book_append_sheet(wb, wsHospitals, "Lista de Hospitais");
-
-      const payersData = data.payers.map(p => ({ 
-        'Nome Principal': p.customName,
-        Apelidos: p.aliases.join(', '),
-        ID: p.id
-      }));
-      const wsPayers = utils.json_to_sheet(payersData);
-      utils.book_append_sheet(wb, wsPayers, "Fontes Pagadoras");
-
-      // Salvar
+      const wb = generateWorkbook(data);
       XLSX.writeFile(wb, `GESTAO_CIRURGICA_CONSOLIDADA_${new Date().toISOString().split('T')[0]}.xlsx`);
       toast.success("Arquivo Excel gerado com sucesso! Salve-o em seu OneDrive, Dropbox ou iCloud.");
     } catch (err) {
@@ -930,61 +1035,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const performSync = async (): Promise<boolean> => {
       try {
-        const { utils } = XLSX;
-        const wb = utils.book_new();
-
-        // Cirurgias
-        const surgeriesData = data.surgeries.map(s => ({
-          Data: s.date,
-          Paciente: s.patientName,
-          Procedimento: s.procedure,
-          Indicação: s.indication || '',
-          Convênio: s.insurance,
-          Atendimento: s.attendance,
-          Empresa: s.company,
-          'Honorários Pagos': s.feesPaid,
-          'Valor Recebido': s.receivedAmount,
-          Hospital: data.hospitals.find(h => h.id === s.hospitalId)?.name || 'N/A',
-          Particular: s.isParticular ? 'Sim' : 'Não',
-          'Valor Particular': s.particularValue || 0,
-          Observações: s.notes || '',
-          'Data Criação': s.createdAt
-        }));
-        utils.book_append_sheet(wb, utils.json_to_sheet(surgeriesData), "Cirurgias Realizadas");
-
-        // Eletivas
-        const electiveSurgeriesData = data.electiveSurgeries.map(s => ({
-          Data: s.date,
-          Paciente: s.patientName,
-          Procedimento: s.procedure,
-          Hospital: data.hospitals.find(h => h.id === s.hospitalId)?.name || 'N/A',
-          Particular: s.isParticular ? 'Sim' : 'Não',
-          'Valor Particular': s.particularValue || 0,
-          'Data Criação': s.createdAt
-        }));
-        utils.book_append_sheet(wb, utils.json_to_sheet(electiveSurgeriesData), "Eletivas Agendadas");
-
-        // Notas
-        const invoicesData = data.invoices.map(i => ({
-          Data: i.date,
-          'Emissão (Dia/Mês)': i.emissionDayMonth,
-          'Número da Nota': i.noteNumber,
-          'Valor Bruto': i.grossAmount,
-          'Valor Líquido': i.netAmount,
-          'Fonte Pagadora': data.payers.find(p => p.id === i.mappedPayerId)?.customName || i.originalPayerName || 'N/A',
-          Descrição: i.description || '',
-          'Data Criação': i.createdAt
-        }));
-        utils.book_append_sheet(wb, utils.json_to_sheet(invoicesData), "Notas Fiscais");
-
-        // Pagamentos
-        const paymentsData = data.payments.map(p => ({
-          Data: p.date,
-          Valor: p.amount,
-          Descrição: p.description || '',
-          'Data Criação': p.createdAt
-        }));
-        utils.book_append_sheet(wb, utils.json_to_sheet(paymentsData), "Pagamentos");
+        const wb = generateWorkbook(data);
 
         const excelBuffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
         const excelBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1066,6 +1117,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     return () => clearTimeout(timeoutId);
   }, [data, cloudBackupEnabled, accessToken, isOffline]);
+
+  // Periodic active sync effect (every 5 minutes)
+  useEffect(() => {
+    let intervalId: any;
+    if (cloudBackupEnabled && accessToken && !isOffline) {
+      intervalId = setInterval(() => {
+        syncDataToDrive();
+      }, 300000); // 5 minutes: 300.000 ms
+    }
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [cloudBackupEnabled, accessToken, isOffline]);
 
   return (
     <AppContext.Provider
