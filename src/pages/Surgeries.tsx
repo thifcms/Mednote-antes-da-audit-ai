@@ -576,8 +576,8 @@ export function Surgeries() {
         lastHospital = hospitalName;
       }
       
-      const rawFeesPaid = getVal(['Honorários', 'Honorários Pagos', 'Fees Paid', 'VALOR BRUTO', 'Valor Pago', 'VALOR PAGO']);
-      const rawReceivedAmount = getVal(['Recebidos', 'Honorários Recebidos', 'Valor (1/2)', 'PAGO', 'Valor Recebido', 'VALOR (1/2)']);
+      const rawFeesPaid = getVal(['Honorários', 'Honorários Pagos', 'Fees Paid', 'VALOR BRUTO', 'Valor Pago', 'VALOR PAGO', 'VALOR PAGO (HONORARIOS)', 'HONORARIOS']);
+      const rawReceivedAmount = getVal(['Recebidos', 'Honorários Recebidos', 'Valor (1/2)', 'Valor Recebido', 'VALOR (1/2)', 'VALOR']);
       
       let feesPaid = parseFinancialAmount(rawFeesPaid);
       let receivedAmount = parseFinancialAmount(rawReceivedAmount);
