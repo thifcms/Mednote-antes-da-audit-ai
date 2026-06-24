@@ -815,17 +815,30 @@ Retorne valorTotal e valorLiquido como números decimais puros (ex: 1500.00), se
 export async function extractSurgeryLabel(file: File) {
   console.time('OCR_Surgery');
   try {
-    const prompt = `Analise esta imagem de etiqueta hospitalar. O texto pode estar em qualquer orientação — reoriente mentalmente para ler corretamente.
+    const prompt = `Analise esta imagem. Antes de extrair qualquer dado, identifique mentalmente o tipo de documento:
+- ETIQUETA FÍSICA INDIVIDUAL
+- TELA DE SISTEMA DIGITAL
+- TABELA/LISTA DE AGENDA (múltiplos pacientes)
+- FOLHA CIRÚRGICA / DESCRIÇÃO OPERATÓRIA
 
-Extraia EXATAMENTE estes campos:
-- patientName: nome completo do paciente (geralmente após "Leito:" ou "Paciente:")
-- attendance: número de atendimento (após "Atend:" ou "Atendimento:")
-- insurance: convênio ou plano de saúde (após "Conv:", "Convênio:", "Plano:" — ex: Unimed, Bradesco, SulAmérica, Amil, Particular)
-- date: data de ENTRADA ou INTERNAÇÃO em formato YYYY-MM-DD (após "Dt.Entr:", "Internação:", "Atend:" — NUNCA use a data de nascimento "DTNasc:" ou "Nasc:")
-- procedure: procedimento cirúrgico, incluindo qualquer anotação manual ou texto adicionado sobre a imagem
+Extraia EXATAMENTE estes campos para cada paciente encontrado:
+- patientName: nome completo do paciente. NUNCA confunda com nome de médico (identificado por "Dr.", "Dra." ou CRM)
+- attendance: número de atendimento
+- insurance: convênio ou plano de saúde — OBRIGATÓRIO. Em etiquetas: "Conv:", "Convênio:", "Plano:". Em telas de sistema: "Classe:". Em tabelas de agenda: coluna após o número de atendimento. Nunca deixe vazio.
+- date: data de entrada/atendimento/cirurgia em YYYY-MM-DD. NUNCA use a data de nascimento
 - hospital: nome do hospital se visível
 
-ATENÇÃO: o campo insurance é obrigatório e quase sempre está presente. Não deixe vazio.`;
+REGRAS POR TIPO DE DOCUMENTO:
+
+ETIQUETA FÍSICA: use OCR letra por letra com fidelidade absoluta. NUNCA aplique lógica de colunas ou tabela — isso embaralha os nomes. Para letras parcialmente visíveis, reconstrua caractere por caractere.
+
+TELA DE SISTEMA: filtre ruídos de interface. Busque "Classe:" como sinônimo de convênio. Diferencie nome do paciente de nomes de médicos.
+
+TABELA DE AGENDA (use SOMENTE se identificar explicitamente múltiplos pacientes em formato de tabela): cada linha é um paciente no formato [Nº Atendimento | Convênio | Hora | Nome | Status | Data]. Exemplo: "5315008 Sul América 13:00 Rafael de Oliveira Barbosa Executada 23/06/2026"
+
+FOLHA CIRÚRGICA: extraia dados do cabeçalho. NUNCA confunda cirurgião ("Cirurgião:", "Dr.") com nome do paciente ("Paciente:", "Nome:", "Beneficiário:").
+
+DADOS ILEGÍVEIS: se completamente ilegível por reflexo ou rasura severa, deixe o campo vazio. Para dados parcialmente visíveis, tente reconstruir.`;
 
     const schema = {
       type: "object",
