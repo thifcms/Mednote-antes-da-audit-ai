@@ -10,8 +10,9 @@ import { toast } from 'sonner';
 import { extractSurgeryLabel } from '../services/ai';
 
 export function ElectiveSurgeries() {
-  const { data, addElectiveSurgery, updateElectiveSurgery, deleteElectiveSurgery, addSurgery } = useApp();
+  const { data, addElectiveSurgery, updateElectiveSurgery, deleteElectiveSurgery, addSurgery, cancelElectiveSurgery, deleteCancelledSurgery } = useApp();
   
+  const [activeTab, setActiveTab] = useState<'active' | 'cancelled'>('active');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showChoiceDialog, setShowChoiceDialog] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -22,6 +23,7 @@ export function ElectiveSurgeries() {
   const [draftSurgery, setDraftSurgery] = useState<any>(null);
   const [isFinishingSurgery, setIsFinishingSurgery] = useState(false);
   const [surgeryToDelete, setSurgeryToDelete] = useState<any>(null);
+  const [surgeryToCancel, setSurgeryToCancel] = useState<any>(null);
   const [surgeryToConfirmRealized, setSurgeryToConfirmRealized] = useState<any>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,7 +150,11 @@ export function ElectiveSurgeries() {
     setIsFinishingSurgery(false);
   };
 
-  const filteredSurgeries = (data.electiveSurgeries || []).filter(s => {
+  const rawSurgeries = activeTab === 'active' 
+    ? (data.electiveSurgeries || []) 
+    : (data.cancelledSurgeries || []);
+
+  const filteredSurgeries = rawSurgeries.filter(s => {
     // Search term filter
     const searchString = `${s.patientName} ${s.procedure} ${data.hospitals?.find(h => h.id === s.hospitalId)?.name || ''}`.toLowerCase();
     const matchesSearch = searchString.includes(searchTerm.toLowerCase());
@@ -188,12 +194,59 @@ export function ElectiveSurgeries() {
       </PageHeader>
 
       <main className="flex-1 p-4 md:p-8 space-y-6 max-w-5xl mx-auto w-full">
-         <div className="bg-[#162744] p-8 rounded-3xl shadow-xl shadow-zinc-200 text-center flex flex-col items-center justify-center border border-white/10 group">
-          <div className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-1 group-hover:text-zinc-300 transition-colors">Procedimentos Aguardando</div>
-          <div className="text-4xl font-bold text-white tabular-nums tracking-tighter uppercase">{data.electiveSurgeries?.length || 0} Pacientes</div>
+         <div className={cn(
+           "p-8 rounded-3xl shadow-xl shadow-zinc-200 text-center flex flex-col items-center justify-center border group transition-colors duration-300",
+           activeTab === 'active' 
+             ? "bg-[#162744] border-white/10" 
+             : "bg-red-950 border-red-900"
+         )}>
+          <div className="text-[9px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-1 group-hover:text-zinc-300 transition-colors">
+            {activeTab === 'active' ? "Procedimentos Aguardando" : "Procedimentos Cancelados"}
+          </div>
+          <div className="text-4xl font-bold text-white tabular-nums tracking-tighter uppercase">
+            {activeTab === 'active' ? (data.electiveSurgeries?.length || 0) : (data.cancelledSurgeries?.length || 0)} Pacientes
+          </div>
          </div>
 
          <div style={{ borderRadius: 16, border: "1px solid #EAECF4", boxShadow: "0 1px 4px rgba(15,32,68,.06)" }} className="bg-white overflow-hidden flex flex-col min-h-[400px]">
+          {/* Abas de Navegação */}
+          <div className="flex border-b border-[#EAECF4] bg-[#F8F9FC]">
+            <button
+              onClick={() => setActiveTab('active')}
+              className={cn(
+                "flex-1 md:flex-none px-6 py-4 text-[10px] font-black uppercase tracking-widest border-b-2 transition-all flex items-center justify-center gap-2",
+                activeTab === 'active' 
+                  ? "border-[#162744] text-[#162744] bg-white font-black" 
+                  : "border-transparent text-zinc-400 hover:text-zinc-600 bg-transparent"
+              )}
+            >
+              Solicitadas
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-[8px] font-bold",
+                activeTab === 'active' ? "bg-[#162744] text-white" : "bg-zinc-200 text-zinc-600"
+              )}>
+                {data.electiveSurgeries?.length || 0}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('cancelled')}
+              className={cn(
+                "flex-1 md:flex-none px-6 py-4 text-[10px] font-black uppercase tracking-widest border-b-2 transition-all flex items-center justify-center gap-2",
+                activeTab === 'cancelled' 
+                  ? "border-red-600 text-red-600 bg-white font-black" 
+                  : "border-transparent text-zinc-400 hover:text-zinc-600 bg-transparent"
+              )}
+            >
+              Canceladas
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-[8px] font-bold",
+                activeTab === 'cancelled' ? "bg-red-600 text-white" : "bg-zinc-200 text-zinc-600"
+              )}>
+                {data.cancelledSurgeries?.length || 0}
+              </span>
+            </button>
+          </div>
+
           <div className="px-6 py-4 border-b border-zinc-50 flex flex-col md:flex-row gap-4 items-center">
              <div className="relative flex-1 w-full">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-300" />
@@ -228,82 +281,127 @@ export function ElectiveSurgeries() {
                      <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Paciente</th>
                      <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Hospital</th>
                      <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Indicação</th>
+                     {activeTab === 'cancelled' && (
+                       <>
+                         <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Motivo do Cancelamento</th>
+                         <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase" }}>Data do Cancelamento</th>
+                       </>
+                     )}
                      <th style={{ padding: "11px 14px", fontSize: 8, fontWeight: 800, color: "#8592A6", letterSpacing: "0.10em", textTransform: "uppercase", textAlign: "right" }}>Ações</th>
                   </tr>
                </thead>
                <tbody className="divide-y divide-zinc-50">
-                 {filteredSurgeries.length === 0 ? (
-                    <tr>
-                       <td colSpan={5} className="px-6 py-12 text-center text-zinc-400">
-                          <div className="flex flex-col items-center gap-2">
-                             <div className="w-12 h-12 bg-zinc-50 rounded-2xl flex items-center justify-center mb-2">
-                                <Plus className="w-5 h-5 text-zinc-300" />
-                             </div>
-                             <p className="text-xs font-bold uppercase tracking-widest">Nenhuma eletiva encontrada</p>
-                          </div>
-                       </td>
-                    </tr>
-                 ) : (
-                    filteredSurgeries.map((surgery) => {
-                       const hosp = data.hospitals?.find(h => h.id === surgery.hospitalId);
-                       return (
-                          <tr 
-                             key={surgery.id} 
-                             style={{ backgroundColor: "transparent" }}
-                             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#F5F6FB"}
-                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
-                             className="group transition-all duration-150"
-                          >
-                             <td style={{ padding: "12px 14px" }}>
-                                <div className="text-[11px] font-mono font-bold text-[#8592A6]">{format(parseISO(surgery.date), 'dd/MM/yyyy')}</div>
-                             </td>
-                             <td style={{ padding: "12px 14px" }}>
-                                <div className="flex flex-col">
-                                   <div className="text-[12px] font-bold text-zinc-900 uppercase truncate max-w-[150px] md:max-w-[200px]" title={surgery.patientName}>{surgery.patientName}</div>
-                                   {surgery.isParticular && (
-                                      <div className="flex items-center gap-1 mt-0.5">
-                                         <div className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[7px] font-black uppercase tracking-tighter border border-emerald-100">Particular</div>
-                                         <span className="text-[9px] font-mono font-bold text-emerald-600">{formatCurrency(surgery.particularValue || 0)}</span>
-                                      </div>
-                                   )}
-                                </div>
-                             </td>
-                             <td style={{ padding: "12px 14px", fontSize: 10, textTransform: "uppercase", color: "#3D4A63", fontWeight: 700 }}>
-                                <div className="max-w-[120px] md:max-w-[150px] truncate" title={hosp?.name || '---'}>{hosp?.name || '---'}</div>
-                             </td>
-                             <td style={{ padding: "12px 14px" }}>
-                                <div className="text-[11px] font-bold text-zinc-600 uppercase truncate max-w-[150px] md:max-w-[200px]" title={surgery.procedure}>{surgery.procedure}</div>
-                             </td>
-                             <td style={{ padding: "12px 14px", textAlign: "right" }}>
-                                <div className="flex justify-end gap-2 transition-opacity">
-                                   <button 
-                                     onClick={() => { setSurgeryToConfirmRealized(surgery); }}
-                                     style={{ borderRadius: 6 }}
-                                     className="px-3 py-1.5 bg-[#10b981]/10 text-[#10b981] hover:bg-[#10b981]/25 text-[9px] font-bold uppercase flex items-center gap-1 transition-all"
-                                     title="Marcar como realizada (migrar p/ Cirurgias)"
-                                   >
-                                     <Check className="w-3 h-3" /> Realizada
-                                   </button>
-                                   <button 
-                                     onClick={() => { setDraftSurgery(surgery); setIsFinishingSurgery(false); setIsModalOpen(true); }}
-                                     className="p-1.5 text-zinc-400 hover:text-zinc-900 transition-colors"
-                                     title="Editar"
-                                   >
-                                     <Edit2 className="w-3.5 h-3.5" />
-                                   </button>
-                                   <button 
-                                     onClick={() => setSurgeryToDelete(surgery)}
-                                     className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                     title="Excluir"
-                                   >
-                                     <Trash2 className="w-3.5 h-3.5" />
-                                   </button>
-                                </div>
-                             </td>
-                          </tr>
-                       );
-                    })
-                 )}
+                  {filteredSurgeries.length === 0 ? (
+                     <tr>
+                        <td colSpan={activeTab === 'cancelled' ? 7 : 5} className="px-6 py-12 text-center text-zinc-400">
+                           <div className="flex flex-col items-center gap-2">
+                              <div className="w-12 h-12 bg-zinc-50 rounded-2xl flex items-center justify-center mb-2">
+                                 <Plus className="w-5 h-5 text-zinc-300" />
+                              </div>
+                              <p className="text-xs font-bold uppercase tracking-widest">
+                                {activeTab === 'active' ? "Nenhuma eletiva encontrada" : "Nenhum cancelamento encontrado"}
+                              </p>
+                           </div>
+                        </td>
+                     </tr>
+                  ) : (
+                     filteredSurgeries.map((surgery) => {
+                        const hosp = data.hospitals?.find(h => h.id === surgery.hospitalId);
+                        return (
+                           <tr 
+                              key={surgery.id} 
+                              style={{ backgroundColor: "transparent" }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#F5F6FB"}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+                              className="group transition-all duration-150"
+                           >
+                              <td style={{ padding: "12px 14px" }}>
+                                 <div className="text-[11px] font-mono font-bold text-[#8592A6]">{format(parseISO(surgery.date), 'dd/MM/yyyy')}</div>
+                              </td>
+                              <td style={{ padding: "12px 14px" }}>
+                                 <div className="flex flex-col">
+                                    <div className="text-[12px] font-bold text-zinc-900 uppercase truncate max-w-[150px] md:max-w-[200px]" title={surgery.patientName}>{surgery.patientName}</div>
+                                    {surgery.isParticular ? (
+                                       <div className="flex items-center gap-1 mt-0.5">
+                                          <div className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[7px] font-black uppercase tracking-tighter border border-emerald-100">Particular</div>
+                                          <span className="text-[9px] font-mono font-bold text-emerald-600">{formatCurrency(surgery.particularValue || 0)}</span>
+                                       </div>
+                                    ) : (
+                                       surgery.insurance && (
+                                         <div className="flex items-center gap-1 mt-0.5">
+                                            <div className="px-1.5 py-0.5 bg-[#162744]/5 text-[#162744] rounded text-[7px] font-black uppercase tracking-tighter border border-[#162744]/10">{surgery.insurance}</div>
+                                         </div>
+                                       )
+                                    )}
+                                 </div>
+                              </td>
+                              <td style={{ padding: "12px 14px", fontSize: 10, textTransform: "uppercase", color: "#3D4A63", fontWeight: 700 }}>
+                                 <div className="max-w-[120px] md:max-w-[150px] truncate" title={hosp?.name || '---'}>{hosp?.name || '---'}</div>
+                              </td>
+                              <td style={{ padding: "12px 14px" }}>
+                                 <div className="text-[11px] font-bold text-zinc-600 uppercase truncate max-w-[150px] md:max-w-[200px]" title={surgery.procedure}>{surgery.procedure}</div>
+                              </td>
+                              {activeTab === 'cancelled' && (
+                                <>
+                                  <td style={{ padding: "12px 14px" }}>
+                                     <span className={cn(
+                                       "px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wide border",
+                                       surgery.cancellationReason === 'Desistência do Paciente'
+                                         ? "bg-amber-50 text-amber-700 border-amber-200"
+                                         : "bg-red-50 text-red-700 border-red-200"
+                                     )}>
+                                       {surgery.cancellationReason}
+                                     </span>
+                                  </td>
+                                  <td style={{ padding: "12px 14px" }}>
+                                     <div className="text-[11px] font-mono font-bold text-[#8592A6]">
+                                       {surgery.cancelledAt ? format(parseISO(surgery.cancelledAt), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '---'}
+                                     </div>
+                                  </td>
+                                </>
+                              )}
+                              <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                                 <div className="flex justify-end gap-2 transition-opacity">
+                                    {activeTab === 'active' ? (
+                                      <>
+                                        <button 
+                                          onClick={() => { setSurgeryToConfirmRealized(surgery); }}
+                                          style={{ borderRadius: 6 }}
+                                          className="px-3 py-1.5 bg-[#10b981]/10 text-[#10b981] hover:bg-[#10b981]/25 text-[9px] font-bold uppercase flex items-center gap-1 transition-all"
+                                          title="Marcar como realizada (migrar p/ Cirurgias)"
+                                        >
+                                          <Check className="w-3 h-3" /> Realizada
+                                        </button>
+                                        <button 
+                                          onClick={() => { setDraftSurgery(surgery); setIsFinishingSurgery(false); setIsModalOpen(true); }}
+                                          className="p-1.5 text-zinc-400 hover:text-zinc-900 transition-colors"
+                                          title="Editar"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button 
+                                          onClick={() => setSurgeryToCancel(surgery)}
+                                          className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                          title="Cancelar Procedimento"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button 
+                                        onClick={() => setSurgeryToDelete(surgery)}
+                                        className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                        title="Excluir Registro de Cancelamento"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                 </div>
+                              </td>
+                           </tr>
+                        );
+                     })
+                  )}
                </tbody>
             </table>
          </div>
@@ -525,7 +623,7 @@ export function ElectiveSurgeries() {
       >
         <div className="space-y-4">
           <p className="text-zinc-600 text-xs font-bold uppercase tracking-wide">
-            Tem certeza que deseja excluir o procedimento eletivo solicitado para o paciente <span className="text-[#162744] font-black">{surgeryToDelete?.patientName}</span>?
+            Tem certeza que deseja excluir o procedimento {activeTab === 'cancelled' ? 'cancelado' : 'solicitado'} para o paciente <span className="text-[#162744] font-black">{surgeryToDelete?.patientName}</span>?
           </p>
           <p className="text-[10px] text-red-500 font-bold uppercase tracking-tight">
             Esta ação removerá permanentemente este registro.
@@ -540,14 +638,68 @@ export function ElectiveSurgeries() {
             <button 
               onClick={async () => {
                 if (surgeryToDelete) {
-                  await deleteElectiveSurgery(surgeryToDelete.id);
-                  toast.success("Procedimento removido com sucesso!");
+                  if (activeTab === 'cancelled') {
+                    await deleteCancelledSurgery(surgeryToDelete.id);
+                    toast.success("Histórico de cancelamento removido permanentemente!");
+                  } else {
+                    await deleteElectiveSurgery(surgeryToDelete.id);
+                    toast.success("Procedimento removido com sucesso!");
+                  }
                   setSurgeryToDelete(null);
                 }
               }}
               className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors shadow-lg shadow-red-100"
             >
               Excluir
+            </button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog 
+        isOpen={!!surgeryToCancel} 
+        onClose={() => setSurgeryToCancel(null)} 
+        title="Cancelar Procedimento Eletivo"
+      >
+        <div className="space-y-4">
+          <p className="text-zinc-600 text-xs font-bold uppercase tracking-wide">
+            Selecione o motivo do cancelamento da cirurgia eletiva do paciente <span className="text-[#162744] font-black">{surgeryToCancel?.patientName}</span>:
+          </p>
+          <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-tight">
+            O procedimento não será excluído, mas sim movido para a aba de registros cancelados para manter o histórico de auditoria médica.
+          </p>
+          <div className="flex flex-col gap-2.5 pt-2">
+            <button 
+              onClick={async () => {
+                if (surgeryToCancel) {
+                  await cancelElectiveSurgery(surgeryToCancel.id, "Desistência do Paciente");
+                  toast.success("Procedimento cancelado por desistência do paciente!");
+                  setSurgeryToCancel(null);
+                }
+              }}
+              style={{ borderRadius: 10 }}
+              className="w-full py-3.5 px-4 bg-zinc-100 hover:bg-zinc-200 text-[#162744] font-black text-[10px] uppercase tracking-widest transition-colors flex items-center justify-center cursor-pointer border border-zinc-200"
+            >
+              Desistência do Paciente
+            </button>
+            <button 
+              onClick={async () => {
+                if (surgeryToCancel) {
+                  await cancelElectiveSurgery(surgeryToCancel.id, "Procedimento Negado pela Operadora");
+                  toast.success("Procedimento cancelado por negação da operadora!");
+                  setSurgeryToCancel(null);
+                }
+              }}
+              style={{ borderRadius: 10 }}
+              className="w-full py-3.5 px-4 bg-red-50 hover:bg-red-100 text-red-600 font-black text-[10px] uppercase tracking-widest transition-colors flex items-center justify-center cursor-pointer border border-red-100"
+            >
+              Procedimento Negado pela Operadora
+            </button>
+            <button 
+              onClick={() => setSurgeryToCancel(null)}
+              className="w-full py-3 text-zinc-400 hover:text-zinc-600 font-black text-[10px] uppercase tracking-widest transition-colors flex items-center justify-center"
+            >
+              Cancelar / Voltar
             </button>
           </div>
         </div>

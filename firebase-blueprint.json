@@ -96,6 +96,24 @@
       },
       "required": ["date", "patientName", "userId"]
     },
+    "CancelledSurgery": {
+      "title": "Cancelled Surgery",
+      "description": "Cancelled elective surgical procedure",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "hospitalId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "procedure": { "type": "string" },
+        "isParticular": { "type": "boolean" },
+        "particularValue": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" },
+        "cancellationReason": { "type": "string" },
+        "cancelledAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "patientName", "userId", "cancellationReason", "cancelledAt"]
+    },
     "SurgeryTemplate": {
       "title": "Surgery Template",
       "description": "Preset diagnosis and surgical procedures for medical autocomplete",
@@ -156,6 +174,10 @@
     "users/{userId}/electiveSurgeries": {
       "schema": "ElectiveSurgery",
       "description": "User's elective surgeries list"
+    },
+    "users/{userId}/cancelledSurgeries": {
+      "schema": "CancelledSurgery",
+      "description": "User's cancelled surgeries list"
     },
     "users/{userId}/surgery_templates": {
       "schema": "SurgeryTemplate",

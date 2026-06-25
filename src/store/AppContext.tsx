@@ -101,6 +101,21 @@ export type ElectiveSurgery = {
   aiSourceHash?: string;
 };
 
+export type CancelledSurgery = {
+  id: string;
+  date: string;
+  hospitalId: string;
+  patientName: string;
+  procedure: string;
+  isParticular?: boolean;
+  particularValue?: number;
+  createdAt: string;
+  userId: string;
+  aiSourceHash?: string;
+  cancellationReason: 'Desistência do Paciente' | 'Procedimento Negado pela Operadora';
+  cancelledAt: string;
+};
+
 export type SurgeryTemplate = {
   id: string;
   diagnosis: string;
@@ -115,6 +130,7 @@ export interface AppData {
   hospitals: Hospital[];
   surgeries: Surgery[];
   electiveSurgeries: ElectiveSurgery[];
+  cancelledSurgeries: CancelledSurgery[];
   payments: Payment[];
   taxPercentage: number;
   appPassword?: string;
@@ -127,6 +143,7 @@ const defaultData: AppData = {
   hospitals: [],
   surgeries: [],
   electiveSurgeries: [],
+  cancelledSurgeries: [],
   payments: [],
   taxPercentage: 0,
   appPassword: '1234',
@@ -180,6 +197,8 @@ interface AppContextType {
   addElectiveSurgery: (surgery: Omit<ElectiveSurgery, 'id' | 'createdAt' | 'userId'> & { id?: string }) => Promise<void>;
   updateElectiveSurgery: (id: string, surgery: Partial<ElectiveSurgery>) => Promise<void>;
   deleteElectiveSurgery: (id: string) => Promise<void>;
+  cancelElectiveSurgery: (id: string, reason: string) => Promise<void>;
+  deleteCancelledSurgery: (id: string) => Promise<void>;
 
   addPayment: (payment: Omit<Payment, 'id' | 'createdAt' | 'userId'> & { id?: string }) => Promise<void>;
   updatePayment: (id: string, payment: Partial<Payment>) => Promise<void>;
@@ -420,6 +439,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       { name: 'hospitals', key: 'hospitals' },
       { name: 'surgeries', key: 'surgeries' },
       { name: 'electiveSurgeries', key: 'electiveSurgeries' },
+      { name: 'cancelledSurgeries', key: 'cancelledSurgeries' },
       { name: 'payments', key: 'payments' },
       { name: 'surgery_templates', key: 'surgery_templates' },
     ];
@@ -661,6 +681,82 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addElectiveSurgery = (surgery: any) => addEntity('electiveSurgeries', surgery);
   const updateElectiveSurgery = (id: string, updates: any) => updateEntity('electiveSurgeries', id, updates);
   const deleteElectiveSurgery = (id: string) => deleteEntity('electiveSurgeries', id);
+
+  const cancelElectiveSurgery = async (id: string, reason: string) => {
+    if (!user) return;
+    
+    // Acha a cirurgia eletiva correspondente pelo id no estado atual
+    const original = data.electiveSurgeries.find(s => s.id === id);
+    if (!original) {
+      toast.error("Cirurgia eletiva não encontrada.");
+      return;
+    }
+
+    const cancelledRecord: CancelledSurgery = {
+      ...original,
+      cancellationReason: reason as any,
+      cancelledAt: new Date().toISOString()
+    };
+
+    // 1. Atualizar o estado em memória de forma síncrona
+    setData(prev => {
+      const listElective = prev.electiveSurgeries || [];
+      const listCancelled = prev.cancelledSurgeries || [];
+      return {
+        ...prev,
+        electiveSurgeries: listElective.filter(s => s.id !== id),
+        cancelledSurgeries: [...listCancelled, cancelledRecord]
+      };
+    });
+
+    // 2. Enfileirar deleção da original e criação da cancelada no syncQueue
+    setSyncQueue(prev => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        collection: 'electiveSurgeries',
+        docId: id,
+        action: 'delete',
+        payload: {}
+      },
+      {
+        id: crypto.randomUUID(),
+        collection: 'cancelledSurgeries',
+        docId: cancelledRecord.id,
+        action: 'create',
+        payload: cancelledRecord
+      }
+    ]);
+
+    toast.success("Cirurgia eletiva cancelada com sucesso!");
+  };
+
+  const deleteCancelledSurgery = async (id: string) => {
+    if (!user) return;
+
+    // 1. Atualizar o estado em memória
+    setData(prev => {
+      const list = prev.cancelledSurgeries || [];
+      return {
+        ...prev,
+        cancelledSurgeries: list.filter(s => s.id !== id)
+      };
+    });
+
+    // 2. Enfileirar deleção no syncQueue
+    setSyncQueue(prev => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        collection: 'cancelledSurgeries',
+        docId: id,
+        action: 'delete',
+        payload: {}
+      }
+    ]);
+
+    toast.success("Registro de cancelamento excluído!");
+  };
 
   const addPayment = (payment: any) => addEntity('payments', payment);
   const updatePayment = (id: string, updates: any) => updateEntity('payments', id, updates);
@@ -1234,6 +1330,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         addElectiveSurgery,
         updateElectiveSurgery,
         deleteElectiveSurgery,
+        cancelElectiveSurgery,
+        deleteCancelledSurgery,
         addPayment,
         updatePayment,
         deletePayment,

@@ -1,9 +1,10 @@
 import Dexie, { type Table } from 'dexie';
-import type { Invoice, Payment, PayerMapping, Hospital, Surgery, ElectiveSurgery, SurgeryTemplate, AppData } from '../store/AppContext';
+import type { Invoice, Payment, PayerMapping, Hospital, Surgery, ElectiveSurgery, CancelledSurgery, SurgeryTemplate, AppData } from '../store/AppContext';
 
 export class MedNoteDatabase extends Dexie {
   surgeries!: Table<Surgery, string>;
   electiveSurgeries!: Table<ElectiveSurgery, string>;
+  cancelledSurgeries!: Table<CancelledSurgery, string>;
   invoices!: Table<Invoice, string>;
   payments!: Table<Payment, string>;
   hospitals!: Table<Hospital, string>;
@@ -23,6 +24,11 @@ export class MedNoteDatabase extends Dexie {
       surgery_templates: 'id, diagnosis, procedure, userId',
       settings: 'key'
     });
+    
+    // Versão 2 adiciona a tabela de cirurgias canceladas para migração sem perda de dados
+    this.version(2).stores({
+      cancelledSurgeries: 'id, date, patientName, cancellationReason, userId'
+    });
   }
 }
 
@@ -36,6 +42,7 @@ export async function loadAllLocalData(defaultData: AppData): Promise<AppData> {
     const [
       surgeries,
       electiveSurgeries,
+      cancelledSurgeries,
       invoices,
       payments,
       hospitals,
@@ -45,6 +52,7 @@ export async function loadAllLocalData(defaultData: AppData): Promise<AppData> {
     ] = await Promise.all([
       dbLocal.surgeries.toArray(),
       dbLocal.electiveSurgeries.toArray(),
+      dbLocal.cancelledSurgeries.toArray(),
       dbLocal.invoices.toArray(),
       dbLocal.payments.toArray(),
       dbLocal.hospitals.toArray(),
@@ -60,6 +68,7 @@ export async function loadAllLocalData(defaultData: AppData): Promise<AppData> {
     return {
       surgeries: surgeries || [],
       electiveSurgeries: electiveSurgeries || [],
+      cancelledSurgeries: cancelledSurgeries || [],
       invoices: invoices || [],
       payments: payments || [],
       hospitals: hospitals || [],
@@ -82,6 +91,7 @@ export async function saveAllLocalData(data: AppData): Promise<void> {
     await dbLocal.transaction('rw', [
       dbLocal.surgeries,
       dbLocal.electiveSurgeries,
+      dbLocal.cancelledSurgeries,
       dbLocal.invoices,
       dbLocal.payments,
       dbLocal.hospitals,
@@ -92,6 +102,7 @@ export async function saveAllLocalData(data: AppData): Promise<void> {
       await Promise.all([
         dbLocal.surgeries.clear().then(() => dbLocal.surgeries.bulkAdd(data.surgeries || [])),
         dbLocal.electiveSurgeries.clear().then(() => dbLocal.electiveSurgeries.bulkAdd(data.electiveSurgeries || [])),
+        dbLocal.cancelledSurgeries.clear().then(() => dbLocal.cancelledSurgeries.bulkAdd(data.cancelledSurgeries || [])),
         dbLocal.invoices.clear().then(() => dbLocal.invoices.bulkAdd(data.invoices || [])),
         dbLocal.payments.clear().then(() => dbLocal.payments.bulkAdd(data.payments || [])),
         dbLocal.hospitals.clear().then(() => dbLocal.hospitals.bulkAdd(data.hospitals || [])),

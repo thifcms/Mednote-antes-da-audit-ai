@@ -77,6 +77,19 @@ service cloud.firestore {
              (data.get('particularValue', 0) is number);
     }
 
+    function isValidCancelledSurgery(data) {
+      return data.keys().hasAll(['date', 'patientName', 'userId', 'createdAt', 'cancellationReason', 'cancelledAt']) &&
+             data.date is string &&
+             data.patientName is string && data.patientName.size() <= 500 &&
+             data.userId == request.auth.uid &&
+             data.cancellationReason is string &&
+             data.cancelledAt is string &&
+             (data.get('procedure', '') is string && data.get('procedure', '').size() <= 1000) &&
+             (data.get('hospitalId', '') is string && data.get('hospitalId', '').size() <= 128) &&
+             (data.get('isParticular', false) is bool) &&
+             (data.get('particularValue', 0) is number);
+    }
+
     function isValidSurgeryTemplate(data) {
       return data.keys().hasAll(['diagnosis', 'procedure', 'userId', 'createdAt']) &&
              data.diagnosis is string && data.diagnosis.size() <= 1000 &&
@@ -147,6 +160,15 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isValidElectiveSurgery(incoming());
         allow update: if isOwner(userId) && isValidElectiveSurgery(incoming()) &&
                       incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /cancelledSurgeries/{surgeryId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidCancelledSurgery(incoming());
+        allow update: if isOwner(userId) && isValidCancelledSurgery(incoming()) &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id', 'aiSourceHash', 'cancellationReason', 'cancelledAt', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
