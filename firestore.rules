@@ -126,7 +126,11 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return (data.get('taxPercentage', 0) is number);
+      return (data.get('taxPercentage', 0) is number) &&
+             (data.get('appPassword', '') is string) &&
+             (data.get('remainingCompanyValue', 0) is number) &&
+             (data.get('displayName', '') is string) &&
+             (data.get('email', '') is string);
     }
 
     // 4. Collection Matches
@@ -134,7 +138,7 @@ service cloud.firestore {
       allow get: if isOwner(userId);
       allow create: if isOwner(userId) && isValidUser(incoming());
       allow update: if isOwner(userId) && isValidUser(incoming()) && 
-                    incoming().diff(existing()).affectedKeys().hasOnly(['taxPercentage', 'displayName', 'email']);
+                    incoming().diff(existing()).affectedKeys().hasOnly(['taxPercentage', 'displayName', 'email', 'appPassword', 'remainingCompanyValue']);
 
       match /invoices/{invoiceId} {
         allow list: if isOwner(userId);

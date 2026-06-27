@@ -134,6 +134,7 @@ export interface AppData {
   payments: Payment[];
   taxPercentage: number;
   appPassword?: string;
+  remainingCompanyValue?: number;
   surgery_templates: SurgeryTemplate[];
 }
 
@@ -147,6 +148,7 @@ const defaultData: AppData = {
   payments: [],
   taxPercentage: 0,
   appPassword: '1234',
+  remainingCompanyValue: 0,
   surgery_templates: [],
 };
 
@@ -220,6 +222,7 @@ interface AppContextType {
   deleteAllData: () => Promise<void>;
 
   updateTaxPercentage: (percentage: number) => Promise<void>;
+  updateRemainingCompanyValue: (value: number) => Promise<void>;
   exportBackup: () => void;
   importBackup: (backupData: string) => Promise<void>;
   exportToExcel: () => void;
@@ -422,7 +425,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const unsubSettings = onSnapshot(doc(db, 'users', user.uid), { includeMetadataChanges: true }, (snap) => {
       if (snap.exists()) {
-        setData(prev => ({ ...prev, taxPercentage: snap.data().taxPercentage || 0, appPassword: snap.data().appPassword || '1234' }));
+        setData(prev => ({ 
+          ...prev, 
+          taxPercentage: snap.data().taxPercentage || 0, 
+          appPassword: snap.data().appPassword || '1234',
+          remainingCompanyValue: snap.data().remainingCompanyValue || 0
+        }));
       }
     }, (err) => {
       if (err.code === 'permission-denied') {
@@ -873,6 +881,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     try {
       await setDoc(doc(db, 'users', user.uid), { appPassword: newPassword }, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+    }
+  };
+
+  const updateRemainingCompanyValue = async (value: number) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'users', user.uid), { remainingCompanyValue: value }, { merge: true });
+      setData(prev => ({ ...prev, remainingCompanyValue: value }));
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
     }
@@ -1349,6 +1367,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         deleteAllHospitals,
         deleteAllData,
         updateTaxPercentage,
+        updateRemainingCompanyValue,
         updateAppPassword,
         exportBackup,
         importBackup,

@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { PageHeader } from '../components/PageHeader';
 import { Dialog } from '../components/ui/Dialog';
-import { Plus, Search, Banknote, Trash2, Download, FileSpreadsheet, Pencil } from 'lucide-react';
+import { Plus, Search, Banknote, Trash2, Download, FileSpreadsheet, Pencil, Check, X } from 'lucide-react';
 import { formatCurrency, safeFormat, cn } from '../lib/utils';
 import { format, parseISO, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -11,7 +11,7 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 
 export function Payments() {
-  const { data, addPayment, updatePayment, deletePayment, deletePayments, deleteAllInvoices } = useApp();
+  const { data, addPayment, updatePayment, deletePayment, deletePayments, deleteAllInvoices, updateRemainingCompanyValue } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'period' | 'all'>('period');
   const [startDate, setStartDate] = useState(format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd'));
@@ -28,6 +28,17 @@ export function Payments() {
     amount: 0,
     description: '',
   });
+
+  const [isEditingRemaining, setIsEditingRemaining] = useState(false);
+  const [tempRemainingValue, setTempRemainingValue] = useState('');
+
+  const handleSaveRemaining = (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseFloat(tempRemainingValue) || 0;
+    updateRemainingCompanyValue(val);
+    setIsEditingRemaining(false);
+    toast.success("Valor remanescente atualizado!");
+  };
 
   const handleAddPayment = (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,20 +164,71 @@ export function Payments() {
       </PageHeader>
 
       <main className="flex-1 p-4 md:p-8 space-y-6 max-w-5xl mx-auto w-full">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div 
             style={{ borderRadius: 16, border: "1px solid #EAECF4", boxShadow: "0 1px 4px rgba(15,32,68,.06)", background: "#FFFFFF", padding: 24 }}
-            className="text-center group"
+            className="text-center group flex flex-col justify-center min-h-[106px]"
           >
               <div className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 group-hover:text-zinc-500 transition-colors">Total Recebido (Ano)</div>
               <div className="text-2xl font-bold text-zinc-900 tabular-nums tracking-tighter" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatCurrency(totalPaymentsYear)}</div>
           </div>
           <div 
             style={{ borderRadius: 16, border: "1px solid #EAECF4", boxShadow: "0 1px 4px rgba(15,32,68,.06)", background: "rgba(14,164,114,0.05)", padding: 24 }}
-            className="text-center group"
+            className="text-center group flex flex-col justify-center min-h-[106px]"
           >
-              <div className="text-[9px] font-black text-[#0EA472] uppercase tracking-widest mb-1 group-hover:text-emerald-700 transition-colors">Total (Ano + Honorários)</div>
+              <div className="text-[9px] font-black text-[#0EA472] uppercase tracking-widest mb-1 group-hover:text-emerald-700 transition-colors">Total (Ano)</div>
               <div className="text-2xl font-bold text-zinc-900 tabular-nums tracking-tighter" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatCurrency(combinedTotalYear)}</div>
+          </div>
+          <div 
+            style={{ borderRadius: 16, border: "1px solid rgba(2,132,199,0.15)", boxShadow: "0 1px 4px rgba(2,132,199,.06)", background: "rgba(2,132,199,0.05)", padding: 24 }}
+            className="text-center group relative flex flex-col justify-center items-center min-h-[106px]"
+          >
+            <div className="text-[9px] font-black text-sky-600 uppercase tracking-widest mb-1 group-hover:text-sky-700 transition-colors">Valor Remanescente a Receber</div>
+            
+            {isEditingRemaining ? (
+              <form onSubmit={handleSaveRemaining} className="flex items-center gap-1.5 mt-1 w-full justify-center max-w-[200px]">
+                <span className="text-xs font-bold text-sky-500 font-mono">R$</span>
+                <input 
+                  type="number"
+                  step="0.01"
+                  autoFocus
+                  value={tempRemainingValue}
+                  onChange={(e) => setTempRemainingValue(e.target.value)}
+                  className="w-full text-center text-lg font-bold text-sky-950 border-b border-sky-200 focus:border-sky-500 outline-none font-mono py-0.5 bg-transparent"
+                />
+                <button 
+                  type="submit" 
+                  className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                  title="Salvar"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setIsEditingRemaining(false)}
+                  className="p-1 text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                  title="Cancelar"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </form>
+            ) : (
+              <div className="flex items-center gap-1.5 mt-1">
+                <div className="text-2xl font-bold text-sky-900 tabular-nums tracking-tighter" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                  {formatCurrency(data.remainingCompanyValue || 0)}
+                </div>
+                <button 
+                  onClick={() => {
+                    setTempRemainingValue(String(data.remainingCompanyValue || ''));
+                    setIsEditingRemaining(true);
+                  }}
+                  className="p-1 text-sky-400 hover:text-sky-600 hover:bg-sky-100/50 rounded-lg transition-colors cursor-pointer"
+                  title="Editar Valor"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

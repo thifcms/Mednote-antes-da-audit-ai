@@ -64,6 +64,7 @@ export async function loadAllLocalData(defaultData: AppData): Promise<AppData> {
     const settingsMap = new Map(settingsList.map(s => [s.key, s.value]));
     const taxPercentage = settingsMap.get('taxPercentage') ?? defaultData.taxPercentage;
     const appPassword = settingsMap.get('appPassword') ?? defaultData.appPassword;
+    const remainingCompanyValue = settingsMap.get('remainingCompanyValue') ?? defaultData.remainingCompanyValue ?? 0;
 
     return {
       surgeries: surgeries || [],
@@ -75,7 +76,8 @@ export async function loadAllLocalData(defaultData: AppData): Promise<AppData> {
       payers: payers || [],
       surgery_templates: surgery_templates || [],
       taxPercentage,
-      appPassword
+      appPassword,
+      remainingCompanyValue
     };
   } catch (error) {
     console.error("Erro de leitura no IndexedDB. Revertendo para dados padrão em memória:", error);
@@ -109,6 +111,7 @@ export async function saveAllLocalData(data: AppData): Promise<void> {
         dbLocal.payers.clear().then(() => dbLocal.payers.bulkAdd(data.payers || [])),
         dbLocal.surgery_templates.clear().then(() => dbLocal.surgery_templates.bulkAdd(data.surgery_templates || [])),
         dbLocal.settings.put({ key: 'taxPercentage', value: data.taxPercentage || 0 }),
+        dbLocal.settings.put({ key: 'remainingCompanyValue', value: data.remainingCompanyValue || 0 }),
         data.appPassword ? dbLocal.settings.put({ key: 'appPassword', value: data.appPassword }) : Promise.resolve()
       ]);
     });
