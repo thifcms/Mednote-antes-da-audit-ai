@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useApp, ElectiveSurgery } from '../store/AppContext';
+import { useApp, ElectiveSurgery, CancelledSurgery } from '../store/AppContext';
 import { PageHeader } from '../components/PageHeader';
 import { Dialog } from '../components/ui/Dialog';
 import { Plus, Search, Check, Edit2, Trash2, Info, Camera, Loader2, ChevronRight } from 'lucide-react';
@@ -342,23 +342,28 @@ export function ElectiveSurgeries() {
                                  <div className="text-[11px] font-bold text-zinc-600 uppercase truncate max-w-[150px] md:max-w-[200px]" title={surgery.procedure}>{surgery.procedure}</div>
                               </td>
                               {activeTab === 'cancelled' && (
-                                <>
-                                  <td style={{ padding: "12px 14px" }}>
-                                     <span className={cn(
-                                       "px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wide border",
-                                       surgery.cancellationReason === 'Desistência do Paciente'
-                                         ? "bg-amber-50 text-amber-700 border-amber-200"
-                                         : "bg-red-50 text-red-700 border-red-200"
-                                     )}>
-                                       {surgery.cancellationReason}
-                                     </span>
-                                  </td>
-                                  <td style={{ padding: "12px 14px" }}>
-                                     <div className="text-[11px] font-mono font-bold text-[#8592A6]">
-                                       {surgery.cancelledAt ? format(parseISO(surgery.cancelledAt), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '---'}
-                                     </div>
-                                  </td>
-                                </>
+                                (() => {
+                                  const cancelledSurgery = surgery as CancelledSurgery;
+                                  return (
+                                    <>
+                                      <td style={{ padding: "12px 14px" }}>
+                                         <span className={cn(
+                                           "px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wide border",
+                                           cancelledSurgery.cancellationReason === 'Desistência do Paciente'
+                                             ? "bg-amber-50 text-amber-700 border-amber-200"
+                                             : "bg-red-50 text-red-700 border-red-200"
+                                         )}>
+                                           {cancelledSurgery.cancellationReason}
+                                         </span>
+                                      </td>
+                                      <td style={{ padding: "12px 14px" }}>
+                                         <div className="text-[11px] font-mono font-bold text-[#8592A6]">
+                                           {cancelledSurgery.cancelledAt ? format(parseISO(cancelledSurgery.cancelledAt), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '---'}
+                                         </div>
+                                      </td>
+                                    </>
+                                  );
+                                })()
                               )}
                               <td style={{ padding: "12px 14px", textAlign: "right" }}>
                                  <div className="flex justify-end gap-2 transition-opacity">

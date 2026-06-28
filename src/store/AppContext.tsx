@@ -96,6 +96,7 @@ export type ElectiveSurgery = {
   procedure: string;
   isParticular?: boolean;
   particularValue?: number;
+  insurance?: string;
   createdAt: string;
   userId: string;
   aiSourceHash?: string;
@@ -109,6 +110,7 @@ export type CancelledSurgery = {
   procedure: string;
   isParticular?: boolean;
   particularValue?: number;
+  insurance?: string;
   createdAt: string;
   userId: string;
   aiSourceHash?: string;

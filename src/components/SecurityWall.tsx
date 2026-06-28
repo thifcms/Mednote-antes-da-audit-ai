@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, Eye, EyeOff, HelpCircle, ExternalLink } from 'lucide-react';
+import { Lock, Eye, EyeOff, HelpCircle, ExternalLink, Fingerprint } from 'lucide-react';
 import { Logo } from './Logo';
 import { useApp } from '../store/AppContext';
 import { SplashScreen } from './SplashScreen';
 import { toast } from 'sonner';
+import { isBiometricsAvailable, authenticateBiometrics } from '../lib/biometrics';
 
 export function SecurityWall({ children }: { children: React.ReactNode }) {
   const { user, data } = useApp();
@@ -20,6 +21,10 @@ export function SecurityWall({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState(false);
   const [showHint, setShowHint] = useState(false);
   
+  const [biometricsSupported, setBiometricsSupported] = useState<boolean | null>(null);
+  const [biometricsEnabled, setBiometricsEnabled] = useState(false);
+  const [isAuthenticatingBiometrics, setIsAuthenticatingBiometrics] = useState(false);
+
   const isIframe = window.self !== window.top;
 
   useEffect(() => {
@@ -39,6 +44,48 @@ export function SecurityWall({ children }: { children: React.ReactNode }) {
       return () => clearTimeout(timer);
     }
   }, [showMainSplash]);
+
+  const handleBiometricAuth = async () => {
+    if (!user) return;
+    setIsAuthenticatingBiometrics(true);
+    try {
+      const success = await authenticateBiometrics(user.uid);
+      if (success) {
+        setIsExiting(true);
+        setTimeout(() => {
+          setIsAuthenticated(true);
+          sessionStorage.setItem('is_authenticated', 'true');
+          setShowMainSplash(true);
+        }, 500);
+        toast.success("Acesso biométrico autorizado!");
+      }
+    } catch (err: any) {
+      console.error(err);
+      if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
+        toast.error(`Erro na biometria: ${err.message || 'Tente digitar seu PIN'}`);
+      }
+    } finally {
+      setIsAuthenticatingBiometrics(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user && !isAuthenticated && !showAnimation) {
+      const enabled = localStorage.getItem(`biometric_enabled_${user.uid}`) === 'true';
+      setBiometricsEnabled(enabled);
+      
+      isBiometricsAvailable().then((supported) => {
+        setBiometricsSupported(supported);
+        if (supported && enabled) {
+          // Dispara o prompt biométrico nativo automaticamente se estiver habilitado
+          const timer = setTimeout(() => {
+            handleBiometricAuth();
+          }, 600);
+          return () => clearTimeout(timer);
+        }
+      });
+    }
+  }, [user, isAuthenticated, showAnimation]);
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,9 +227,22 @@ export function SecurityWall({ children }: { children: React.ReactNode }) {
                   </motion.p>
                 )}
 
+                {biometricsEnabled && (
+                  <button 
+                    type="button"
+                    onClick={handleBiometricAuth}
+                    disabled={isAuthenticatingBiometrics}
+                    style={{ borderRadius: 12 }}
+                    className="w-full mt-6 bg-emerald-50 text-emerald-600 py-3.5 rounded-xl font-bold uppercase tracking-widest text-[10px] hover:bg-emerald-100/80 transition-all active:scale-[0.98] flex items-center justify-center gap-2 border border-emerald-100 cursor-pointer shadow-sm"
+                  >
+                    <Fingerprint className="w-4.5 h-4.5 text-emerald-600 animate-[pulse_2s_infinite]" />
+                    {isAuthenticatingBiometrics ? "Aguardando Leitor..." : "🔐 Entrar com Biometria"}
+                  </button>
+                )}
+
                 <button 
                   type="submit"
-                  className="w-full mt-6 bg-[#162744] text-white py-4 rounded-xl font-bold uppercase tracking-widest text-[10px] hover:bg-[#0f1b32] transition-all active:scale-[0.98] shadow-xl shadow-slate-200"
+                  className={`w-full ${biometricsEnabled ? 'mt-3' : 'mt-6'} bg-[#162744] text-white py-4 rounded-xl font-bold uppercase tracking-widest text-[10px] hover:bg-[#0f1b32] transition-all active:scale-[0.98] shadow-xl shadow-slate-200`}
                 >
                   Confirmar Acesso
                 </button>

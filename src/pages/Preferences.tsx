@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
-import { Settings, Percent, Save, CheckCircle2, Eye, EyeOff, Lock, Trash2, Download, Upload, ShieldCheck, FileSpreadsheet, Cloud, CloudOff, RefreshCw, Cpu, CheckCircle, XCircle } from 'lucide-react';
+import { Settings, Percent, Save, CheckCircle2, Eye, EyeOff, Lock, Trash2, Download, Upload, ShieldCheck, FileSpreadsheet, Cloud, CloudOff, RefreshCw, Cpu, CheckCircle, XCircle, Fingerprint } from 'lucide-react';
 import { Dialog } from '../components/ui/Dialog';
 import { toast } from 'sonner';
+import { isBiometricsAvailable, registerBiometrics } from '../lib/biometrics';
 
 export function Preferences() {
   const { 
@@ -18,7 +19,8 @@ export function Preferences() {
     cloudBackupEnabled,
     setCloudBackupEnabled,
     signIn,
-    updateAppPassword
+    updateAppPassword,
+    user
   } = useApp();
   const [percentage, setPercentage] = useState(data.taxPercentage.toString());
   const [oldPassword, setOldPassword] = useState('');
@@ -34,6 +36,52 @@ export function Preferences() {
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [docEngineStatus, setDocEngineStatus] = useState<'idle' | 'testing' | 'online' | 'offline'>('idle');
+
+  const [biometricsSupported, setBiometricsSupported] = useState<boolean | null>(null);
+  const [biometricsEnabled, setBiometricsEnabled] = useState<boolean>(() => {
+    if (!user) return false;
+    return localStorage.getItem(`biometric_enabled_${user.uid}`) === 'true';
+  });
+  const [isRegisteringBiometrics, setIsRegisteringBiometrics] = useState(false);
+
+  // Efeito para verificar se a biometria nativa está disponível no dispositivo
+  React.useEffect(() => {
+    isBiometricsAvailable().then((supported) => {
+      setBiometricsSupported(supported);
+    });
+  }, []);
+
+  const handleToggleBiometrics = async () => {
+    if (!user) {
+      toast.error("Você precisa estar autenticado para configurar a biometria.");
+      return;
+    }
+
+    if (biometricsEnabled) {
+      localStorage.removeItem(`biometric_enabled_${user.uid}`);
+      localStorage.removeItem(`biometric_credential_id_${user.uid}`);
+      setBiometricsEnabled(false);
+      toast.success("Biometria desativada com sucesso neste dispositivo!");
+    } else {
+      setIsRegisteringBiometrics(true);
+      try {
+        const result = await registerBiometrics(user.uid, user.email || '');
+        if (result && result.credentialId) {
+          localStorage.setItem(`biometric_enabled_${user.uid}`, 'true');
+          localStorage.setItem(`biometric_credential_id_${user.uid}`, result.credentialId);
+          setBiometricsEnabled(true);
+          toast.success("Autenticação biométrica ativada com sucesso neste dispositivo!");
+        } else {
+          toast.error("Não foi possível registrar a biometria.");
+        }
+      } catch (err: any) {
+        console.error(err);
+        toast.error(`Erro ao configurar biometria: ${err.message || 'Operação cancelada ou não suportada'}`);
+      } finally {
+        setIsRegisteringBiometrics(false);
+      }
+    }
+  };
 
   const testDocEngine = async () => {
     setDocEngineStatus('testing');
@@ -381,6 +429,40 @@ export function Preferences() {
                  Ao clicar aqui, você sairá do aplicativo e a tela de senha será exigida no próximo acesso.
                </p>
             </div>
+
+            <div className="p-8 border-b border-zinc-100 bg-zinc-50/20">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex-1 space-y-1 text-left">
+                  <div className="flex items-center gap-2">
+                    <Fingerprint className="w-4 h-4 text-[#162744]" />
+                    <h3 className="text-[10px] font-black text-zinc-900 uppercase tracking-widest">Login via Biometria</h3>
+                  </div>
+                  <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-tight leading-relaxed">
+                    Use Face ID, Touch ID ou biometria nativa para acessar o app instantaneamente sem digitar o PIN.
+                  </p>
+                </div>
+                {biometricsSupported === false ? (
+                  <span className="text-[8px] font-black text-amber-600 bg-amber-50 border border-amber-100 px-3 py-1.5 rounded-lg uppercase tracking-wider shrink-0 text-center">
+                    Indisponível neste Navegador
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleToggleBiometrics}
+                    disabled={isRegisteringBiometrics}
+                    style={{ borderRadius: 12 }}
+                    className={`px-4 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all shrink-0 cursor-pointer ${
+                      biometricsEnabled
+                        ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100'
+                        : 'bg-[#162744] hover:bg-[#0f1b32] text-white shadow-md shadow-slate-200'
+                    }`}
+                  >
+                    {isRegisteringBiometrics ? 'Configurando...' : biometricsEnabled ? 'Biometria Ativa • Desativar' : 'Ativar Biometria'}
+                  </button>
+                )}
+              </div>
+            </div>
+
             <form onSubmit={handleChangePassword} className="p-8 space-y-6 bg-zinc-50/30">
                <h2 className="text-[10px] font-black text-zinc-900 uppercase tracking-widest mb-4">Alterar Senha do App</h2>
                 <div className="relative">
