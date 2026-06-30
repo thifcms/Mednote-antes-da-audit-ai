@@ -606,7 +606,10 @@ export function ElectiveSurgeries() {
             </button>
             <button 
               onClick={() => {
-                const targetSurgery = surgeryToConfirmRealized;
+                const targetSurgery = {
+                  ...surgeryToConfirmRealized,
+                  date: new Date().toISOString().split('T')[0]
+                };
                 setSurgeryToConfirmRealized(null);
                 setDraftSurgery(targetSurgery);
                 setIsFinishingSurgery(true);
