@@ -24,6 +24,7 @@ export function SecurityWall({ children }: { children: React.ReactNode }) {
   const [biometricsSupported, setBiometricsSupported] = useState<boolean | null>(null);
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
   const [isAuthenticatingBiometrics, setIsAuthenticatingBiometrics] = useState(false);
+  const hasAttemptedAutoAuth = React.useRef(false);
 
   const isIframe = window.self !== window.top;
 
@@ -76,7 +77,8 @@ export function SecurityWall({ children }: { children: React.ReactNode }) {
       
       isBiometricsAvailable().then((supported) => {
         setBiometricsSupported(supported);
-        if (supported && enabled) {
+        if (supported && enabled && !hasAttemptedAutoAuth.current) {
+          hasAttemptedAutoAuth.current = true;
           // Dispara o prompt biométrico nativo automaticamente se estiver habilitado
           const timer = setTimeout(() => {
             handleBiometricAuth();
