@@ -403,6 +403,49 @@ export function Surgeries() {
     setPreviewSurgeries(newSurgeries);
   };
 
+  const [lastReconciliation, setLastReconciliation] = useState<any | null>(() => {
+    try {
+      const saved = localStorage.getItem('last_reconciliation_batch');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleUndoLastReconciliation = async () => {
+    if (!lastReconciliation) return;
+    if (!window.confirm("Deseja realmente reverter a última conciliação em lote? Isso excluirá as novas cirurgias criadas por ela e restaurará os valores anteriores de honorários e recebidos das cirurgias que foram atualizadas.")) {
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const { createdSurgeryIds, updatedSurgeries } = lastReconciliation;
+
+      // 1. Excluir cirurgias criadas
+      if (createdSurgeryIds && createdSurgeryIds.length > 0) {
+        await deleteSurgeries(createdSurgeryIds);
+      }
+
+      // 2. Restaurar cirurgias atualizadas
+      if (updatedSurgeries && updatedSurgeries.length > 0) {
+        for (const item of updatedSurgeries) {
+          await updateSurgery(item.id, item.previousValues);
+        }
+      }
+
+      // Limpar do localStorage e do estado
+      localStorage.removeItem('last_reconciliation_batch');
+      setLastReconciliation(null);
+      toast.success("Última conciliação em lote revertida com sucesso!");
+    } catch (err) {
+      console.error("Erro ao reverter conciliação em lote:", err);
+      toast.error("Erro ao reverter conciliação em lote.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const addBlankSurgery = () => {
     const blank = {
       date: new Date().toISOString().split('T')[0],
@@ -1464,6 +1507,16 @@ export function Surgeries() {
               {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />} 
               <span>Foto</span>
            </button>
+
+           {lastReconciliation && (
+             <button 
+               onClick={handleUndoLastReconciliation} 
+               className="flex items-center justify-center gap-2 bg-amber-50 text-amber-700 hover:bg-amber-100 px-3 md:px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-tight transition-all shadow-sm hover:shadow-md active:scale-95 border border-amber-200/30"
+               title="Desfazer última conciliação em lote"
+             >
+                <span>↩ Reverter Lote</span>
+             </button>
+           )}
         </div>
 
         <button 
@@ -1763,6 +1816,26 @@ export function Surgeries() {
                       <td style={{ padding: "12px 14px", textAlign: "right", fontSize: 12, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#162744" }}>{formatCurrency(surgery.receivedAmount)}</td>
                         <td className="px-4 py-4 text-center">
                          <div className="flex items-center justify-center gap-2">
+                            {surgery.receivedAmount > 0 && (
+                              <button 
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (window.confirm(`Deseja realmente reverter o pagamento da cirurgia de ${surgery.patientName} de volta para Pendente?`)) {
+                                    try {
+                                      await updateSurgery(surgery.id, { receivedAmount: 0 });
+                                      toast.success("Status de pagamento revertido para Pendente!");
+                                    } catch (err) {
+                                      toast.error("Erro ao reverter pagamento.");
+                                    }
+                                  }
+                                }}
+                                className="px-2 py-1 text-[9px] font-black uppercase tracking-tight text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-lg transition-all"
+                                title="Reverter Pagamento para Pendente"
+                              >
+                                 ↩ Reverter
+                              </button>
+                            )}
                             <button 
                               type="button"
                               onClick={(e) => {
@@ -2660,16 +2733,54 @@ export function Surgeries() {
                         };
 
                         const createdHospitalsCache = new Map<string, string>();
+                        
+                        // Preparar estrutura de histórico para desfazer/reverter depois
+                        const batchToSave: {
+                          timestamp: number;
+                          createdSurgeryIds: string[];
+                          updatedSurgeries: { id: string; previousValues: Record<string, any> }[];
+                        } = {
+                          timestamp: Date.now(),
+                          createdSurgeryIds: [],
+                          updatedSurgeries: []
+                        };
 
+                        // 1. Guardar valores anteriores das cirurgias a serem atualizadas
+                        updatedSurgeries.forEach((us) => {
+                          const existing = data.surgeries.find(x => x.id === us.id);
+                          if (existing) {
+                            const previousValues: Record<string, any> = {};
+                            Object.keys(us.updates).forEach(key => {
+                              previousValues[key] = (existing as any)[key] !== undefined ? (existing as any)[key] : null;
+                            });
+                            batchToSave.updatedSurgeries.push({
+                              id: us.id,
+                              previousValues
+                            });
+                          }
+                        });
+
+                        // 2. Realizar adições com IDs pré-gerados para permitir exclusão posterior no desfazer
                         newSurgeries.forEach(async (s) => {
                            const hospitalId = await resolveHospital(s, createdHospitalsCache);
-                           addSurgery({ ...s, hospitalId });
+                           const newId = crypto.randomUUID();
+                           batchToSave.createdSurgeryIds.push(newId);
+                           addSurgery({ ...s, id: newId, hospitalId });
                         });
                         
+                        // 3. Realizar as atualizações
                         updatedSurgeries.forEach(async (s) => {
                            const hospitalId = await resolveHospital(s.updates, createdHospitalsCache);
                            updateSurgery(s.id, { ...s.updates, hospitalId });
                         });
+
+                        // 4. Salvar histórico no localStorage e no estado
+                        try {
+                          localStorage.setItem('last_reconciliation_batch', JSON.stringify(batchToSave));
+                          setLastReconciliation(batchToSave);
+                        } catch (storageErr) {
+                          console.error("Erro ao salvar histórico de conciliação no localStorage", storageErr);
+                        }
                         
                         toast.success(`Reconciliação iniciada! ${newSurgeries.length} novos, ${updatedSurgeries.length} atualizados.`);
                         setReconciliationState(null);

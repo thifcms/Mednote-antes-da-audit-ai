@@ -13,7 +13,7 @@ export const SURGERY_FIELDS: FieldDefinition[] = [
   { key: 'date', label: 'Data da Cirurgia', required: true, keywords: ['data', 'date', 'data cirurgia', 'data da cirurgia', 'dt', 'data_cirurgia', 'dia', 'data oportuna'] },
   { key: 'procedure', label: 'Procedimento / Cirurgia', required: true, keywords: ['cirurgia', 'procedimento', 'descrição', 'descriçao', 'descricao', 'procedimento cirúrgico', 'procedimento_cirurgico', 'cirurgia realizada', 'procedimentos', 'especificação'] },
   { key: 'insurance', label: 'Convênio / Fonte Pagadora', required: false, keywords: ['convênio', 'convenio', 'seguradora', 'seguro', 'fonte pagadora', 'fonte_pagadora', 'plano', 'carteira', 'empresa conveniada'] },
-  { key: 'feesPaid', label: 'Honorários (Valor Bruto)', required: false, keywords: ['honorários', 'honorários pagos', 'fees paid', 'valor bruto', 'valor pago', 'valor_pago', 'honorarios', 'vlr bruto', 'bruto', 'valor do honorario', 'valor brt', 'bruto r$', 'valor total', 'valor pago (honorarios)'] },
+  { key: 'feesPaid', label: 'Honorários (Valor Bruto)', required: false, keywords: ['honorários', 'honorários pagos', 'fees paid', 'valor bruto', 'valor pago', 'valor_pago', 'honorarios', 'vlr bruto', 'bruto', 'valor do honorario', 'valor brt', 'bruto r$', 'valor total', 'valor pago (honorarios)', 'r$ a pagar', 'a pagar', 'vlr pago', 'vlr.pago', 'vl.repasse', 'vl repasse', 'repasse', 'valor repasse'] },
   { key: 'receivedAmount', label: 'Valor Recebido (Líquido)', required: false, keywords: ['recebidos', 'honorários recebidos', 'valor (1/2)', 'valor recebido', 'recebido', 'valor_recebido', 'líquido', 'liquido', 'recebido r$', 'pago (1/2)', 'valor'] },
   { key: 'hospitalName', label: 'Hospital', required: false, keywords: ['hospital', 'local', 'unidade', 'estabelecimento', 'hosp', 'estabelecimento de saúde'] },
   { key: 'attendance', label: 'Atendimento / Guia', required: false, keywords: ['atendimento', 'atend', 'atend.', 'atendimento_numero', 'guia', 'nº atendimento', 'cod atendimento', 'codigo', 'cod. atendimento'] },
@@ -97,7 +97,23 @@ export function suggestAutoMapping(headers: string[], fieldDefs: FieldDefinition
       }
       
       if (field.key === 'feesPaid') {
-        if (hNorm === 'valor pago (honorarios)' || hNorm === 'valor pago' || hNorm === 'honorários' || hNorm === 'honorarios') {
+        const hNormCheck = hNorm.replace(/\s+/g, ' ').replace(/\./g, ' ').trim();
+        const terms = [
+          'valor pago (honorarios)',
+          'valor pago',
+          'honorarios',
+          'r$ a pagar',
+          'a pagar',
+          'vlr pago',
+          'vl repasse',
+          'repasse',
+          'valor repasse'
+        ];
+        const isMatch = terms.some(t => {
+          const tNorm = t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
+          return hNormCheck === tNorm || hNormCheck.includes(tNorm);
+        });
+        if (isMatch) {
           score = Math.max(score, 95);
         }
       }
