@@ -197,6 +197,11 @@ export async function suggestAutoMapping(headers: string[], fieldDefs: FieldDefi
   mapping: Record<string, string>; // campo_sistema -> coluna_planilha
   confidence: boolean;
 }> {
+  // ATENÇÃO: O endpoint '/api/excel/suggest-mapping' foi temporariamente removido no servidor de produção da Audit AI.
+  // Como resultado, estamos utilizando as heurísticas locais de processamento (suggestAutoMappingLocal) por padrão.
+  // Quando a rota correspondente for recriada na API da Audit AI, o bloco de chamada HTTP comentado abaixo pode ser reativado.
+  
+  /*
   try {
     const response = await fetch('https://audit-ai-6wed.onrender.com/api/excel/suggest-mapping', {
       method: 'POST',
@@ -223,11 +228,12 @@ export async function suggestAutoMapping(headers: string[], fieldDefs: FieldDefi
         confidence: data.confidence !== undefined ? data.confidence : true
       };
     }
-    throw new Error('Formato de resposta inesperado');
   } catch (error) {
     console.warn('Audit AI offline para mapeamento Excel, recorrendo a heurísticas locais de fallback:', error);
-    return suggestAutoMappingLocal(headers, fieldDefs);
   }
+  */
+
+  return suggestAutoMappingLocal(headers, fieldDefs);
 }
 
 export function saveMappingToLocal(headersPattern: string, mapping: Record<string, string>) {

@@ -193,7 +193,7 @@ export function PaymentReconciliation() {
         reader.readAsDataURL(file);
       });
 
-      const response = await fetch('https://audit-ai-6wed.onrender.com/api/reconcile/match', {
+      const response = await fetch('https://audit-ai-6wed.onrender.com/api/reconcile/', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
