@@ -1208,7 +1208,7 @@ export function Surgeries() {
           // 3. Tentar auto-sugestão fuzzy
           let needsCalibration = false;
           if (!activeMapping) {
-            const auto = suggestAutoMapping(firstSheetHeaders, SURGERY_FIELDS);
+            const auto = await suggestAutoMapping(firstSheetHeaders, SURGERY_FIELDS);
             activeMapping = auto.mapping;
             if (!auto.confidence) {
               needsCalibration = true;

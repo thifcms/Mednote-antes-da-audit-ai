@@ -68,7 +68,7 @@ export function calculateFuzzyScore(header: string, keywords: string[]): number 
   return maxScore;
 }
 
-export function suggestAutoMapping(headers: string[], fieldDefs: FieldDefinition[]): { 
+export function suggestAutoMappingLocal(headers: string[], fieldDefs: FieldDefinition[]): { 
   mapping: Record<string, string>; // campo_sistema -> coluna_planilha
   confidence: boolean;
 } {
@@ -191,6 +191,43 @@ export function suggestAutoMapping(headers: string[], fieldDefs: FieldDefinition
   });
 
   return { mapping, confidence: allRequiredMet };
+}
+
+export async function suggestAutoMapping(headers: string[], fieldDefs: FieldDefinition[]): Promise<{ 
+  mapping: Record<string, string>; // campo_sistema -> coluna_planilha
+  confidence: boolean;
+}> {
+  try {
+    const response = await fetch('https://audit-ai-6wed.onrender.com/api/excel/suggest-mapping', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': 'auditai_key_2026_medico'
+      },
+      body: JSON.stringify({
+        headers,
+        fieldDefs,
+        fields: fieldDefs.map(f => f.key),
+        sheetType: fieldDefs[0]?.key === 'patientName' ? 'surgeries' : 'invoices'
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP Error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data && data.mapping) {
+      return {
+        mapping: data.mapping,
+        confidence: data.confidence !== undefined ? data.confidence : true
+      };
+    }
+    throw new Error('Formato de resposta inesperado');
+  } catch (error) {
+    console.warn('Audit AI offline para mapeamento Excel, recorrendo a heurísticas locais de fallback:', error);
+    return suggestAutoMappingLocal(headers, fieldDefs);
+  }
 }
 
 export function saveMappingToLocal(headersPattern: string, mapping: Record<string, string>) {

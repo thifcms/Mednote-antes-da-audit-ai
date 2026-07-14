@@ -507,7 +507,7 @@ export function Invoices() {
           // 3. Tentar auto-sugestão fuzzy
           let needsCalibration = false;
           if (!activeMapping) {
-            const auto = suggestAutoMapping(firstSheetHeaders, INVOICE_FIELDS);
+            const auto = await suggestAutoMapping(firstSheetHeaders, INVOICE_FIELDS);
             activeMapping = auto.mapping;
             if (!auto.confidence) {
               needsCalibration = true;

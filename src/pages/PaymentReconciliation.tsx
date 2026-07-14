@@ -193,12 +193,19 @@ export function PaymentReconciliation() {
         reader.readAsDataURL(file);
       });
 
-      const response = await fetch('/api/gemini/extract', {
+      const response = await fetch('https://audit-ai-6wed.onrender.com/api/reconcile/match', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-api-key': 'auditai_key_2026_medico'
+        },
         body: JSON.stringify({
           fileType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
           base64Data: base64,
+          fileBase64: base64,
+          fileName: file.name,
+          filename: file.name,
+          surgeries: data.surgeries,
           prompt: "Extraia os pagamentos de honorários/repasse deste relatório. Priorize as linhas que pertencem ao médico 'THIAGO ANDRE DE OLIVEIRA S'. Se não encontrar o nome do médico, extraia todos os pagamentos de pacientes visíveis. Retorne uma lista de pacientes e seus respectivos valores pagos.",
           schema: {
             description: "Lista de pagamentos",
@@ -221,16 +228,25 @@ export function PaymentReconciliation() {
         })
       });
 
-      if (!response.ok) throw new Error('Falha na comunicação com a IA');
+      if (!response.ok) throw new Error('Falha na comunicação com a IA de Conciliação');
       
-      const data = await response.json();
-      if (data.payments && data.payments.length > 0) {
-        processAndMatchPayments(data.payments);
-      } else if (data.analysis && data.analysis.payments && data.analysis.payments.length > 0) {
-        processAndMatchPayments(data.analysis.payments);
-      } else {
-        setError('Nenhum pagamento identificado no documento.');
+      const resData = await response.json();
+      console.log("Response from /api/reconcile/match:", resData);
+
+      if (resData.proposedUpdates || resData.proposals) {
+        const proposals = resData.proposedUpdates || resData.proposals;
+        const unmatched = resData.unmatchedPayments || resData.unmatched || [];
+        setProposedUpdates(proposals);
+        setUnmatchedPayments(unmatched);
         setIsProcessing(false);
+      } else {
+        const payments = resData.payments || resData.analysis?.payments || [];
+        if (payments && payments.length > 0) {
+          processAndMatchPayments(payments);
+        } else {
+          setError('Nenhum pagamento identificado no documento.');
+          setIsProcessing(false);
+        }
       }
     } catch (err) {
       setError('Erro ao processar com IA. Tente novamente ou use uma planilha.');

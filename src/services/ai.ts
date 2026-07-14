@@ -597,86 +597,187 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   // Inicializa global
   (window as any).__lastExtractionMetrics = metrics;
 
-  // 1. TENTA PRIMEIRO O SERVIDOR DE PRODUÇÃO DA AUDIT AI (Primeira e única opção de IA)
-  try {
-    console.log("Iniciando extração via API de Produção da Audit AI...");
-    const productionResponse = await fetch('https://audit-ai-6wed.onrender.com/api/gemini/extract', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'x-api-key': (import.meta as any).env.VITE_AUDIT_AI_KEY || 'auditai_key_2026_medico'
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        fileBase64: base64Data,
-        filename: file.name || 'documento.jpg',
-        mimeType,
-        prompt,
-        schema,
-      })
-    });
+  // 1. TENTA PRIMEIRO O SERVIDOR DE PRODUÇÃO DA AUDIT AI (IA)
+  const isSurgery = schema?.properties?.patientName !== undefined;
+  const useAsyncFlow = !isSurgery || mimeType === 'application/pdf' || file.size > 1 * 1024 * 1024;
 
-    clearTimeout(timeoutId);
-    const endTimeNetwork = performance.now();
-    const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
-    console.log(`⏱️ Tempo de rede [Audit AI]: ${networkDuration}s`);
+  if (useAsyncFlow) {
+    try {
+      console.log("Iniciando extração assíncrona via Audit AI (extract-async)...");
+      const asyncResponse = await fetch('https://audit-ai-6wed.onrender.com/api/gemini/extract-async', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-api-key': (import.meta as any).env.VITE_AUDIT_AI_KEY || 'auditai_key_2026_medico'
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          fileBase64: base64Data,
+          filename: file.name || 'documento.jpg',
+          mimeType,
+          prompt,
+          schema,
+        })
+      });
 
-    httpStatusCode = productionResponse.status;
-    httpStatusMsg = productionResponse.statusText;
-    metrics.httpStatus = httpStatusCode;
-    metrics.httpStatusText = httpStatusMsg;
-    metrics.networkDurationSec = networkDuration;
+      if (!asyncResponse.ok) {
+        throw new Error(`Falha ao iniciar processamento assíncrono: HTTP ${asyncResponse.status}`);
+      }
 
-    if (productionResponse.ok) {
-      const prodData = await productionResponse.json();
-      metrics.rawResponseTruncated = JSON.stringify(prodData).substring(0, 1000);
-      metrics.usedModel = prodData?.usedModel || 'N/A';
-      console.log('AUDIT AI RAW RESPONSE FROM PRODUCTION API:', JSON.stringify(prodData));
+      const asyncData = await asyncResponse.json();
+      const jobId = asyncData.job_id || asyncData.jobId;
+      if (!jobId) {
+        throw new Error("Job ID não retornado pelo servidor na chamada assíncrona.");
+      }
+
+      console.log(`Job criado com sucesso. ID: ${jobId}. Iniciando polling a cada 2s...`);
       
-      const hasLlamaBypassed = prodData?.usedModel === 'llama-3.3-70b-versatile' || prodData?.usedProvider === 'groq';
-      const actualProdData = prodData?.data || prodData;
-      const isProdContentEmpty = !actualProdData?.nome_paciente && !actualProdData?.patientName && !actualProdData?.emitente;
+      // Polling loop
+      let attempts = 0;
+      const maxAttempts = 30; // 60 segundos no total
+      let jobResult: any = null;
 
-      if (hasLlamaBypassed && isProdContentEmpty) {
-        console.warn("⚠️ API de Produção caiu em fallback Llama-Texto e retornou vazio. Ativando OCR local...");
-        metrics.fallbackTriggered = true;
-        metrics.fallbackReason = "O Llama Bypassed retornou um JSON vazio sem nome_paciente/patientName.";
-      } else {
-        responseData = prodData;
-        responseOk = true;
+      while (attempts < maxAttempts) {
+        // Wait 2 seconds before polling
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        attempts++;
+        console.log(`Polling do job ${jobId} - Tentativa ${attempts}/${maxAttempts}...`);
+
+        const pollResponse = await fetch(`https://audit-ai-6wed.onrender.com/api/gemini/jobs/${jobId}`, {
+          method: 'GET',
+          headers: {
+            'x-api-key': (import.meta as any).env.VITE_AUDIT_AI_KEY || 'auditai_key_2026_medico'
+          }
+        });
+
+        if (!pollResponse.ok) {
+          console.warn(`Erro no polling do job (status ${pollResponse.status}). Ignorando tentativa.`);
+          continue;
+        }
+
+        const pollData = await pollResponse.json();
+        const status = (pollData.status || '').toLowerCase();
+
+        if (status === 'completed' || status === 'done' || status === 'success') {
+          jobResult = pollData.result || pollData.data || pollData;
+          break;
+        } else if (status === 'failed' || status === 'error') {
+          throw new Error(`O processamento assíncrono falhou no servidor: ${pollData.message || pollData.error || 'Erro desconhecido'}`);
+        }
       }
-    } else {
-      console.warn(`⚠️ API de Produção falhou com status ${productionResponse.status}.`);
+
+      if (!jobResult) {
+        throw new Error("Timeout ao processar documento de forma assíncrona.");
+      }
+
+      clearTimeout(timeoutId);
+      const endTimeNetwork = performance.now();
+      const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
+      console.log(`⏱️ Tempo total do fluxo assíncrono [Audit AI]: ${networkDuration}s`);
+
+      httpStatusCode = 200;
+      httpStatusMsg = 'OK';
+      metrics.httpStatus = httpStatusCode;
+      metrics.httpStatusText = httpStatusMsg;
+      metrics.networkDurationSec = networkDuration;
+      metrics.usedModel = jobResult?.usedModel || 'N/A';
+      metrics.rawResponseTruncated = JSON.stringify(jobResult).substring(0, 1000);
+
+      responseData = jobResult;
+      responseOk = true;
+
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      const endTimeNetwork = performance.now();
+      const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
+      console.log(`⏱️ Tempo de rede [Audit AI - Falha/Timeout no fluxo assíncrono]: ${networkDuration}s`);
+      
+      metrics.networkDurationSec = networkDuration;
       metrics.fallbackTriggered = true;
-      metrics.fallbackReason = `HTTP não-OK: ${productionResponse.status} ${productionResponse.statusText}`;
-      try {
-        const errorBody = await productionResponse.text();
-        metrics.rawResponseTruncated = `Error Body: ${errorBody.substring(0, 500)}`;
-      } catch (errBodyEx) {
-        metrics.rawResponseTruncated = `Falhou ao ler o corpo do erro HTTP ${productionResponse.status}`;
-      }
+      metrics.networkError = err.stack || err.message;
+      metrics.fallbackReason = `Exceção fluxo assíncrono: ${err.message}`;
     }
-  } catch (prodErr: any) {
-    clearTimeout(timeoutId);
-    const endTimeNetwork = performance.now();
-    const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
-    console.log(`⏱️ Tempo de rede [Audit AI - Falha/Timeout]: ${networkDuration}s`);
-    
-    metrics.networkDurationSec = networkDuration;
-    metrics.fallbackTriggered = true;
-    
-    if (prodErr.name === 'AbortError') {
-      console.warn("❌ Erro: Tempo limite de 40 segundos atingido na conexão com a Audit AI.");
-      metrics.networkError = "Timeout (AbortError) - Estourou o limite de 40 segundos.";
-      metrics.fallbackReason = "Timeout inteligente de 40 segundos na rede.";
-    } else {
-      console.error("❌ Falha chamando API de Produção da Audit AI:", prodErr.message);
-      metrics.networkError = prodErr.stack || prodErr.message;
-      metrics.fallbackReason = `Exceção de Fetch de Rede: ${prodErr.message}`;
+  } else {
+    // Synchronous flow using public/extract
+    try {
+      console.log("Iniciando extração síncrona via API de Produção da Audit AI (/public/extract)...");
+      const productionResponse = await fetch('https://audit-ai-6wed.onrender.com/public/extract', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-api-key': (import.meta as any).env.VITE_AUDIT_AI_KEY || 'auditai_key_2026_medico'
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          fileBase64: base64Data,
+          filename: file.name || 'documento.jpg',
+          mimeType,
+          prompt,
+          schema,
+        })
+      });
+
+      clearTimeout(timeoutId);
+      const endTimeNetwork = performance.now();
+      const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
+      console.log(`⏱️ Tempo de rede [Audit AI síncrono]: ${networkDuration}s`);
+
+      httpStatusCode = productionResponse.status;
+      httpStatusMsg = productionResponse.statusText;
+      metrics.httpStatus = httpStatusCode;
+      metrics.httpStatusText = httpStatusMsg;
+      metrics.networkDurationSec = networkDuration;
+
+      if (productionResponse.ok) {
+        const prodData = await productionResponse.json();
+        metrics.rawResponseTruncated = JSON.stringify(prodData).substring(0, 1000);
+        metrics.usedModel = prodData?.usedModel || 'N/A';
+        console.log('AUDIT AI RAW RESPONSE FROM SYNCHRONOUS API:', JSON.stringify(prodData));
+        
+        const hasLlamaBypassed = prodData?.usedModel === 'llama-3.3-70b-versatile' || prodData?.usedProvider === 'groq';
+        const actualProdData = prodData?.data || prodData;
+        const isProdContentEmpty = !actualProdData?.nome_paciente && !actualProdData?.patientName && !actualProdData?.emitente;
+
+        if (hasLlamaBypassed && isProdContentEmpty) {
+          console.warn("⚠️ API de Produção caiu em fallback Llama-Texto e retornou vazio. Ativando OCR local...");
+          metrics.fallbackTriggered = true;
+          metrics.fallbackReason = "O Llama Bypassed retornou um JSON vazio sem nome_paciente/patientName.";
+        } else {
+          responseData = prodData;
+          responseOk = true;
+        }
+      } else {
+        console.warn(`⚠️ API de Produção síncrona falhou com status ${productionResponse.status}.`);
+        metrics.fallbackTriggered = true;
+        metrics.fallbackReason = `HTTP não-OK: ${productionResponse.status} ${productionResponse.statusText}`;
+        try {
+          const errorBody = await productionResponse.text();
+          metrics.rawResponseTruncated = `Error Body: ${errorBody.substring(0, 500)}`;
+        } catch (errBodyEx) {
+          metrics.rawResponseTruncated = `Falhou ao ler o corpo do erro HTTP ${productionResponse.status}`;
+        }
+      }
+    } catch (prodErr: any) {
+      clearTimeout(timeoutId);
+      const endTimeNetwork = performance.now();
+      const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
+      console.log(`⏱️ Tempo de rede [Audit AI síncrono - Falha/Timeout]: ${networkDuration}s`);
+      
+      metrics.networkDurationSec = networkDuration;
+      metrics.fallbackTriggered = true;
+      
+      if (prodErr.name === 'AbortError') {
+        console.warn("❌ Erro: Tempo limite de 40 segundos atingido na conexão com a Audit AI síncrona.");
+        metrics.networkError = "Timeout (AbortError) - Estourou o limite de 40 segundos.";
+        metrics.fallbackReason = "Timeout inteligente de 40 segundos na rede.";
+      } else {
+        console.error("❌ Falha chamando API síncrona da Audit AI:", prodErr.message);
+        metrics.networkError = prodErr.stack || prodErr.message;
+        metrics.fallbackReason = `Exceção de Fetch de Rede síncrona: ${prodErr.message}`;
+      }
     }
   }
 
-  const isSurgery = schema?.properties?.patientName !== undefined;
   let mapped: any = null;
   if (responseOk && responseData) {
     try {
