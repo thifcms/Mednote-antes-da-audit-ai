@@ -193,60 +193,142 @@ export function PaymentReconciliation() {
         reader.readAsDataURL(file);
       });
 
-      const response = await fetch('https://audit-ai-6wed.onrender.com/api/reconcile/', {
+      // ETAPA 1: extrai os pagamentos do documento via Audit AI (/public/extract)
+      const extractResponse = await fetch('https://audit-ai-6wed.onrender.com/public/extract', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-api-key': 'auditai_key_2026_medico'
-        },
+        headers: { 'Content-Type': 'application/json', 'x-api-key': 'auditai_key_2026_medico' },
         body: JSON.stringify({
-          fileType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
-          base64Data: base64,
           fileBase64: base64,
-          fileName: file.name,
-          filename: file.name,
-          surgeries: data.surgeries,
-          prompt: "Extraia os pagamentos de honorários/repasse deste relatório. Priorize as linhas que pertencem ao médico 'THIAGO ANDRE DE OLIVEIRA S'. Se não encontrar o nome do médico, extraia todos os pagamentos de pacientes visíveis. Retorne uma lista de pacientes e seus respectivos valores pagos.",
+          filename: file.name || 'relatorio.pdf',
+          mimeType: file.type || 'application/pdf',
+          prompt: `Este é um relatório de repasse médico hospitalar (formato SOULMV ou similar). A tabela tem colunas como: Conta | Atendimento | Paciente | Atividade | Convênio | Data | Vl.Repasse.
+
+IMPORTANTE: extraia APENAS os registros onde a coluna "Atividade" seja DIFERENTE de "CLINICO" (ou seja: CIRURGIAO, PRIMEIRO AUXILIAR, SEGUNDO AUXILIAR, ANESTESISTA, INSTRUMENTADOR, ou qualquer atividade cirúrgica — ignore apenas CLINICO).
+
+Priorize as linhas do médico "THIAGO ANDRE DE OLIVEIRA S". Se não achar o nome, extraia todos os pagamentos não-CLINICO visíveis.
+
+Para cada registro, extraia: nome_paciente, numero_atendimento (coluna Atendimento), valor (coluna Vl.Repasse, número decimal sem "R$"), data_atendimento (DD/MM/AA ou DD/MM/AAAA).
+
+Se o MESMO atendimento tiver várias linhas (vários procedimentos), retorne cada linha separadamente — a soma é feita depois.
+
+Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimento}]}`,
           schema: {
-            description: "Lista de pagamentos",
-            type: "object",
+            type: 'object',
             properties: {
-              payments: {
-                type: "array",
+              resultados: {
+                type: 'array',
                 items: {
-                  type: "object",
+                  type: 'object',
                   properties: {
-                    patientName: { type: "string", description: "Nome completo do paciente" },
-                    amount: { type: "number", description: "Valor repassado/pago (número)" }
-                  },
-                  required: ["patientName", "amount"]
+                    nome_paciente: { type: 'string' },
+                    numero_atendimento: { type: 'string' },
+                    valor: { type: 'number' },
+                    data_atendimento: { type: 'string' }
+                  }
                 }
               }
-            },
-            required: ["payments"]
+            }
           }
         })
       });
 
-      if (!response.ok) throw new Error('Falha na comunicação com a IA de Conciliação');
-      
-      const resData = await response.json();
-      console.log("Response from /api/reconcile/match:", resData);
+      if (!extractResponse.ok) throw new Error('Falha na extração do documento pela Audit AI');
+      const extractData = await extractResponse.json();
+      const a = extractData.analysis || extractData.data || extractData;
+      const resultados = a.resultados || a.results || [];
 
-      if (resData.proposedUpdates || resData.proposals) {
-        const proposals = resData.proposedUpdates || resData.proposals;
-        const unmatched = resData.unmatchedPayments || resData.unmatched || [];
-        setProposedUpdates(proposals);
-        setUnmatchedPayments(unmatched);
+      if (!resultados.length) {
+        setError('Nenhum pagamento cirúrgico identificado no documento.');
         setIsProcessing(false);
-      } else {
-        const payments = resData.payments || resData.analysis?.payments || [];
-        if (payments && payments.length > 0) {
-          processAndMatchPayments(payments);
+        return;
+      }
+
+      // Agrupa por atendimento (ou nome+data se atendimento vier vazio) somando os
+      // valores — necessário pois cirurgias com múltiplos procedimentos aparecem
+      // em várias linhas do relatório e devem ser somadas num único pagamento.
+      const grupos = new Map<string, { nome_paciente: string, numero_atendimento: string, valor: number, data_atendimento: string }>();
+      resultados.forEach((r: any) => {
+        const atd = String(r.numero_atendimento || '').trim();
+        const chave = atd || `${(r.nome_paciente || '').toLowerCase().trim()}|${r.data_atendimento || ''}`;
+        if (!atd && !(r.nome_paciente || '').trim()) return;
+        const existing = grupos.get(chave);
+        if (existing) {
+          existing.valor += (r.valor || 0);
         } else {
-          setError('Nenhum pagamento identificado no documento.');
-          setIsProcessing(false);
+          grupos.set(chave, {
+            nome_paciente: r.nome_paciente || '',
+            numero_atendimento: atd,
+            valor: r.valor || 0,
+            data_atendimento: r.data_atendimento || ''
+          });
         }
+      });
+      const hospitalAgrupado = Array.from(grupos.values());
+
+      // ETAPA 2: manda os pagamentos já agrupados + cirurgias locais pro motor de conciliação
+      const patientsPayload = data.surgeries.map(s => ({
+        numero_atendimento: s.attendance || '',
+        nome: s.patientName,
+        valor: s.feesPaid || 0,
+        data: s.date,
+        _surgeryId: s.id
+      }));
+
+      const hospitalPayload = hospitalAgrupado.map(r => ({
+        atendimento: r.numero_atendimento,
+        paciente: r.nome_paciente,
+        pago: r.valor,
+        data: r.data_atendimento
+      }));
+
+      const reconcileResponse = await fetch('https://audit-ai-6wed.onrender.com/api/reconcile/from-ids', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': 'auditai_key_2026_medico' },
+        body: JSON.stringify({
+          patients: patientsPayload,
+          hospital: hospitalPayload,
+          options: { matchBy: 'ambos', nameSimilarity: 0.75, tolerance: 0.01 }
+        })
+      });
+
+      if (!reconcileResponse.ok) throw new Error('Falha na conciliação');
+      const reconcileData = await reconcileResponse.json();
+
+      const proposals: ProposedUpdate[] = [];
+      let duplicadosCount = 0;
+
+      (reconcileData.allResults || []).forEach((r: any) => {
+        if (r.status === 'DUPLICADO') { duplicadosCount++; return; }
+        if (!r.hospitalRecord || !r.valorPago || r.valorPago <= 0) return;
+        const surgeryId = r.patientRecord?._surgeryId;
+        const surgery = data.surgeries.find(s => s.id === surgeryId);
+        if (!surgery) return;
+        proposals.push({
+          surgeryId: surgery.id,
+          patientName: surgery.patientName,
+          currentFees: surgery.feesPaid || 0,
+          newFees: (surgery.feesPaid || 0) + r.valorPago,
+          increment: r.valorPago,
+          procedure: surgery.procedure,
+          date: surgery.date
+        });
+      });
+
+      const unmatched = (reconcileData.extrasNoHospital || []).map((r: any, i: number) => ({
+        id: `unmatched-${i}-${Date.now()}`,
+        patientName: r.nomePaciente || '',
+        amount: r.valorCobrado || 0
+      }));
+
+      setProposedUpdates(proposals);
+      setUnmatchedPayments(unmatched);
+      setIsProcessing(false);
+
+      if (duplicadosCount > 0) {
+        toast.warning(`${duplicadosCount} registro(s) marcado(s) como possível duplicata — revise manualmente.`);
+      }
+      if (proposals.length === 0 && unmatched.length === 0) {
+        setError('Nenhum pagamento identificado foi encontrado na sua lista de cirurgias.');
       }
     } catch (err) {
       setError('Erro ao processar com IA. Tente novamente ou use uma planilha.');
