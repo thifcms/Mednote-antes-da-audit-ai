@@ -138,6 +138,7 @@ export interface AppData {
   appPassword?: string;
   remainingCompanyValue?: number;
   surgery_templates: SurgeryTemplate[];
+  doctorName?: string;
 }
 
 const defaultData: AppData = {
@@ -152,6 +153,7 @@ const defaultData: AppData = {
   appPassword: '1234',
   remainingCompanyValue: 0,
   surgery_templates: [],
+  doctorName: 'Thiago Andre de Oliveira Santos',
 };
 
 enum OperationType {
@@ -225,6 +227,7 @@ interface AppContextType {
 
   updateTaxPercentage: (percentage: number) => Promise<void>;
   updateRemainingCompanyValue: (value: number) => Promise<void>;
+  updateDoctorName: (name: string) => Promise<void>;
   exportBackup: () => void;
   importBackup: (backupData: string) => Promise<void>;
   exportToExcel: () => void;
@@ -431,7 +434,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ...prev, 
           taxPercentage: snap.data().taxPercentage || 0, 
           appPassword: snap.data().appPassword || '1234',
-          remainingCompanyValue: snap.data().remainingCompanyValue || 0
+          remainingCompanyValue: snap.data().remainingCompanyValue || 0,
+          doctorName: snap.data().doctorName || 'Thiago Andre de Oliveira Santos'
+        }));
+      } else {
+        setData(prev => ({
+          ...prev,
+          doctorName: 'Thiago Andre de Oliveira Santos'
         }));
       }
     }, (err) => {
@@ -893,6 +902,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       await setDoc(doc(db, 'users', user.uid), { remainingCompanyValue: value }, { merge: true });
       setData(prev => ({ ...prev, remainingCompanyValue: value }));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+    }
+  };
+
+  const updateDoctorName = async (name: string) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'users', user.uid), { doctorName: name }, { merge: true });
+      setData(prev => ({ ...prev, doctorName: name }));
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
     }
@@ -1370,6 +1389,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         deleteAllData,
         updateTaxPercentage,
         updateRemainingCompanyValue,
+        updateDoctorName,
         updateAppPassword,
         exportBackup,
         importBackup,

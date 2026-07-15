@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
-import { Settings, Percent, Save, CheckCircle2, Eye, EyeOff, Lock, Trash2, Download, Upload, ShieldCheck, FileSpreadsheet, Cloud, CloudOff, RefreshCw, Cpu, CheckCircle, XCircle, Fingerprint } from 'lucide-react';
+import { Settings, Percent, Save, CheckCircle2, Eye, EyeOff, Lock, Trash2, Download, Upload, ShieldCheck, FileSpreadsheet, Cloud, CloudOff, RefreshCw, Cpu, CheckCircle, XCircle, Fingerprint, User } from 'lucide-react';
 import { Dialog } from '../components/ui/Dialog';
 import { toast } from 'sonner';
 import { isBiometricsAvailable, registerBiometrics } from '../lib/biometrics';
@@ -20,9 +20,12 @@ export function Preferences() {
     setCloudBackupEnabled,
     signIn,
     updateAppPassword,
+    updateDoctorName,
     user
   } = useApp();
   const [percentage, setPercentage] = useState(data.taxPercentage.toString());
+  const [doctorNameInput, setDoctorNameInput] = useState(data.doctorName || 'Thiago Andre de Oliveira Santos');
+  const [doctorNameSaved, setDoctorNameSaved] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -38,6 +41,13 @@ export function Preferences() {
   const [docEngineStatus, setDocEngineStatus] = useState<'idle' | 'testing' | 'online' | 'offline'>('idle');
 
   const [biometricsSupported, setBiometricsSupported] = useState<boolean | null>(null);
+
+  // Sync doctor's name input with app context when data loads
+  React.useEffect(() => {
+    if (data.doctorName) {
+      setDoctorNameInput(data.doctorName);
+    }
+  }, [data.doctorName]);
   const [biometricsEnabled, setBiometricsEnabled] = useState<boolean>(() => {
     if (!user) return false;
     return localStorage.getItem(`biometric_enabled_${user.uid}`) === 'true';
@@ -123,6 +133,18 @@ export function Preferences() {
     }
   };
 
+  const handleSaveDoctorName = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (doctorNameInput.trim()) {
+      updateDoctorName(doctorNameInput.trim());
+      toast.success("Nome do médico atualizado!");
+      setDoctorNameSaved(true);
+      setTimeout(() => setDoctorNameSaved(false), 3000);
+    } else {
+      toast.error("O nome do médico não pode ser vazio.");
+    }
+  };
+
   const handleChangePassword = (e: React.FormEvent) => {
     e.preventDefault();
     const storedPassword = data.appPassword || '1234';
@@ -181,6 +203,55 @@ export function Preferences() {
       </header>
 
       <div className="p-4 md:p-8 max-w-2xl mx-auto w-full space-y-8">
+        {/* DADOS PROFISSIONAIS */}
+        <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-3">
+            <div className="p-2 bg-[#162744] rounded-xl">
+              <User className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <h2 className="text-[10px] font-black text-zinc-900 uppercase tracking-widest">Dados Profissionais</h2>
+              <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-tight">Nome e identificação do cirurgião.</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveDoctorName} className="p-8 space-y-8">
+            <div className="space-y-3">
+              <label className="block text-[10px] font-black text-zinc-700 uppercase tracking-widest">
+                Nome do Médico
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={doctorNameInput}
+                  onChange={(e) => setDoctorNameInput(e.target.value)}
+                  className="block w-full px-4 py-3 text-[11px] font-black border border-zinc-200 rounded-xl focus:border-[#162744] outline-none transition-all"
+                  placeholder="EX: Thiago Andre de Oliveira Santos"
+                />
+              </div>
+              <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-tight leading-relaxed">
+                Este nome é usado para identificar e cruzar seus repasses médicos nos relatórios do ORTTRAM/MedNote, evitando falhas de conciliação.
+              </p>
+            </div>
+
+            <div className="pt-6 border-t border-zinc-100 flex items-center gap-4">
+              <button
+                type="submit"
+                className="flex items-center gap-3 bg-[#162744] hover:bg-[#0f1b32] text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95"
+              >
+                <Save className="w-4 h-4" />
+                Salvar Nome
+              </button>
+              {doctorNameSaved && (
+                <span className="flex items-center gap-2 text-emerald-600 text-[10px] font-black uppercase tracking-widest animate-in fade-in slide-in-from-left-2">
+                  <CheckCircle2 className="w-4 h-4" />
+                  Salvo!
+                </span>
+              )}
+            </div>
+          </form>
+        </div>
+
         <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
           <div className="p-6 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-3">
             <div className="p-2 bg-[#162744] rounded-xl">

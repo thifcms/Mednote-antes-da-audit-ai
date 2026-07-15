@@ -33,7 +33,7 @@ interface ProposedUpdate {
 }
 
 export function PaymentReconciliation() {
-  const { data, updateSurgery } = useApp();
+  const { data, updateSurgery, user } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
   const [proposedUpdates, setProposedUpdates] = useState<ProposedUpdate[]>([]);
   const [acceptedIds, setAcceptedIds] = useState<Set<string>>(new Set());
@@ -153,15 +153,17 @@ export function PaymentReconciliation() {
           return;
         }
 
-        const DR_NAME = "THIAGO ANDRE DE OLIVEIRA S";
+        const rawDoctorName = data.doctorName || "THIAGO ANDRE DE OLIVEIRA SANTOS";
+        const cleanDoctorName = rawDoctorName.replace(/^(dr\s+|dra\s+|dr\.\s+|dra\.\s+)/i, '').trim().toUpperCase();
         
         // Filter rows by doctor name if the column exists
         let sourceRows = rows;
         if (doctorCol !== -1) {
-          const doctorRows = rows.filter(row => 
-            String(row[doctorCol] || '').trim().toUpperCase().includes(DR_NAME) ||
-            String(row[doctorCol] || '').trim().toUpperCase().includes("THIAGO ANDRE")
-          );
+          const doctorRows = rows.filter(row => {
+            const val = String(row[doctorCol] || '').trim().toUpperCase();
+            return val.includes(cleanDoctorName) || 
+                   (cleanDoctorName.length > 10 && val.includes(cleanDoctorName.substring(0, 15)));
+          });
           if (doctorRows.length > 0) {
             sourceRows = doctorRows;
           }
@@ -187,6 +189,9 @@ export function PaymentReconciliation() {
 
   const handleDocumentWithAI = async (file: File) => {
     try {
+      const rawDoctorName = data.doctorName || user?.displayName || 'THIAGO ANDRE DE OLIVEIRA SANTOS';
+      const cleanDoctorName = rawDoctorName.replace(/^(dr\s+|dra\s+|dr\.\s+|dra\.\s+)/i, '').trim();
+
       const base64 = await new Promise<string>((resolve) => {
         const reader = new FileReader();
         reader.onload = () => resolve((reader.result as string).split(',')[1]);
@@ -205,7 +210,9 @@ export function PaymentReconciliation() {
 
 IMPORTANTE: extraia APENAS os registros onde a coluna "Atividade" seja DIFERENTE de "CLINICO" (ou seja: CIRURGIAO, PRIMEIRO AUXILIAR, SEGUNDO AUXILIAR, ANESTESISTA, INSTRUMENTADOR, ou qualquer atividade cirúrgica — ignore apenas CLINICO).
 
-Priorize as linhas do médico "THIAGO ANDRE DE OLIVEIRA S". Se não achar o nome, extraia todos os pagamentos não-CLINICO visíveis.
+Nome do médico cadastrado: ${cleanDoctorName}
+
+Se não encontrar o médico cadastrado no relatório, extraia todos os pagamentos não-CLINICO visíveis.
 
 Para cada registro, extraia: nome_paciente, numero_atendimento (coluna Atendimento), valor (coluna Vl.Repasse, número decimal sem "R$"), data_atendimento (DD/MM/AA ou DD/MM/AAAA).
 
