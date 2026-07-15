@@ -1,4 +1,5 @@
 import Tesseract from 'tesseract.js';
+import { toast } from 'sonner';
 
 // Fallback usando Tesseract.js para OCR local básico
 async function processWithTesseract(file: File) {
@@ -498,7 +499,36 @@ function mapAuditAiResponse(responseData: any, isSurgery?: boolean) {
   };
 }
 
-export async function processImage(file: File, prompt: string, schema?: any) {
+export async function processImage(file: File, prompt: string, schema?: any): Promise<any> {
+  let toastId: string | number | undefined;
+  try {
+    return await processImageAttempt(file, prompt, schema);
+  } catch (error: any) {
+    console.warn("⚠️ [DIAGNÓSTICO MEDNOTE] Primeira tentativa de extração falhou. Iniciando retry automático silencioso...", error);
+    
+    // Mostra um toast de feedback discreto para o usuário
+    toastId = toast.loading("Tentando novamente...", {
+      description: "A primeira tentativa falhou. Uma nova tentativa de extração está em andamento...",
+      duration: 15000
+    });
+
+    try {
+      // Pequeno delay (1 segundo) para garantir estabilidade antes de tentar de novo
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const result = await processImageAttempt(file, prompt, schema);
+      
+      if (toastId) toast.dismiss(toastId);
+      toast.success("Extração concluída com sucesso na segunda tentativa!");
+      return result;
+    } catch (retryError) {
+      if (toastId) toast.dismiss(toastId);
+      throw retryError;
+    }
+  }
+}
+
+async function processImageAttempt(file: File, prompt: string, schema?: any) {
   let base64Data: string;
   let mimeType: string;
 
@@ -567,7 +597,9 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   // 1. TENTA PRIMEIRO O SERVIDOR DE PRODUÇÃO DA AUDIT AI (IA SÍNCRONA)
   const isSurgery = schema?.properties?.patientName !== undefined;
   try {
-    console.log("Iniciando extração via API síncrona de Produção da Audit AI (/public/extract)...");
+    const startTimestamp = new Date().toISOString();
+    console.log(`[DIAGNÓSTICO ETAPA 1] [${startTimestamp}] Iniciando fetch para a API síncrona da Audit AI (https://audit-ai-6wed.onrender.com/public/extract)...`);
+    
     const productionResponse = await fetch('https://audit-ai-6wed.onrender.com/public/extract', {
       method: 'POST',
       headers: { 
@@ -587,7 +619,8 @@ export async function processImage(file: File, prompt: string, schema?: any) {
     clearTimeout(timeoutId);
     const endTimeNetwork = performance.now();
     const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
-    console.log(`⏱️ Tempo de rede [Audit AI síncrono]: ${networkDuration}s`);
+    const endTimestamp = new Date().toISOString();
+    console.log(`[DIAGNÓSTICO ETAPA 1] [${endTimestamp}] Resposta HTTP recebida da Audit AI. Duração total: ${networkDuration}s. Status: ${productionResponse.status} (${productionResponse.statusText})`);
 
     httpStatusCode = productionResponse.status;
     httpStatusMsg = productionResponse.statusText;
@@ -628,7 +661,8 @@ export async function processImage(file: File, prompt: string, schema?: any) {
     clearTimeout(timeoutId);
     const endTimeNetwork = performance.now();
     const networkDuration = ((endTimeNetwork - startTimeNetwork) / 1000).toFixed(2);
-    console.log(`⏱️ Tempo de rede [Audit AI síncrono - Falha/Timeout]: ${networkDuration}s`);
+    const errTimestamp = new Date().toISOString();
+    console.error(`[DIAGNÓSTICO ETAPA 1] [${errTimestamp}] Erro ou Exceção de rede no fetch da Audit AI. Duração decorrida: ${networkDuration}s. Detalhes:`, prodErr);
     
     metrics.networkDurationSec = networkDuration;
     metrics.fallbackTriggered = true;
@@ -726,6 +760,18 @@ export async function processImage(file: File, prompt: string, schema?: any) {
   if (!mapped) {
     (window as any).__lastExtractionMetrics = metrics;
     window.dispatchEvent(new CustomEvent('extractionMetricsUpdated'));
+    console.error("❌ [DIAGNÓSTICO MEDNOTE] FALHA TOTAL NA EXTRAÇÃO AUTOMÁTICA:", {
+      erroRedeOuTimeout: metrics.networkError || "Nenhum erro de rede explícito",
+      statusHTTP: metrics.httpStatus,
+      mensagemStatusHTTP: metrics.httpStatusText,
+      razaoFallback: metrics.fallbackReason,
+      detalhesTesseractLocal: {
+        duracaoSegundos: metrics.tesseractDurationSec,
+        tamanhoTextoExtraido: metrics.tesseractTextLength,
+        amostraTextoExtraido: metrics.tesseractTextSample,
+        heuristicaExtraida: metrics.tesseractHeuristics
+      }
+    });
     throw new Error("Não foi possível realizar a extração automática. A imagem pode estar ilegível ou o servidor de IA e OCR local falharam.");
   }
 
