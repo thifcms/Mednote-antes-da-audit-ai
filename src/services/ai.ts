@@ -1,27 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
 import Tesseract from 'tesseract.js';
-
-// Função para extração usando a nova DocEngine API
-async function processWithDocEngine(file: File) {
-  const formData = new FormData();
-  formData.append('file', file);
-
-  try {
-    const response = await fetch('/api/read', {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error('Falha na DocEngine');
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.warn('DocEngine failed, falling back to Tesseract:', error);
-    return await processWithTesseract(file);
-  }
-}
 
 // Fallback usando Tesseract.js para OCR local básico
 async function processWithTesseract(file: File) {
@@ -261,16 +238,6 @@ export function parseTextWithHeuristics(rawText: string, isSurgery: boolean) {
       isLocalOCR: true
     };
   }
-}
-
-// In a real app we'd keep this securely managed or using a proxy backend.
-// In AI Studio preview, the env var is populated.
-function getClient() {
-  const apiKey = typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY environment variable is missing.');
-  }
-  return new GoogleGenAI({ apiKey });
 }
 
 async function resizeImage(file: File, maxSide: number = 1200): Promise<{ base64: string, mimeType: string }> {
