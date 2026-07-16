@@ -25,8 +25,10 @@ export function ElectiveSurgeries() {
   const [surgeryToDelete, setSurgeryToDelete] = useState<any>(null);
   const [surgeryToCancel, setSurgeryToCancel] = useState<any>(null);
   const [surgeryToConfirmRealized, setSurgeryToConfirmRealized] = useState<any>(null);
+  const [formResetKey, setFormResetKey] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const finishingFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -62,6 +64,7 @@ export function ElectiveSurgeries() {
         hospitalId,
         date: extracted.date || new Date().toISOString().split('T')[0]
       });
+      setFormResetKey(prev => prev + 1);
     } catch (err: any) {
       console.error(err);
       let msg = isPdf 
@@ -79,6 +82,61 @@ export function ElectiveSurgeries() {
       setIsProcessing(false);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleCaptureForFinishing = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isPdf = file.type === 'application/pdf';
+
+    try {
+      setIsProcessing(true);
+      setProcessingMessage(isPdf ? 'Processando documento...' : 'Otimizando imagem...');
+      setErrorMessage(null);
+      
+      const extracted = await extractSurgeryLabel(file);
+      
+      if (extracted?._quotaExhausted || extracted?._usedModel?.includes('GEMINI_API_KEY_PAID')) {
+        toast.warning(
+          '⚠️ Usando processamento pago — cota gratuita esgotada hoje. Renova à meia-noite (horário de Brasília).',
+          { duration: 8000 }
+        );
+      }
+      
+      setDraftSurgery((prev: any) => {
+        if (!prev) return prev;
+        const updated = { ...prev };
+        
+        if (extracted.insurance) {
+          updated.insurance = extracted.insurance;
+        }
+        if (extracted.attendance) {
+          updated.attendance = extracted.attendance;
+        }
+        if (extracted.company) {
+          updated.company = extracted.company;
+        }
+        return updated;
+      });
+      
+      setFormResetKey(prev => prev + 1);
+      toast.success("Dados da etiqueta extraídos e mesclados com sucesso!");
+    } catch (err: any) {
+      console.error(err);
+      let msg = isPdf 
+        ? 'A extração do PDF falhou. Certifique-se de que o documento é legível.'
+        : 'A leitura falhou. Tente tirar uma foto mais aproximada e nítida da etiqueta.';
+      
+      if (err instanceof Error && err.message) {
+        msg = err.message;
+      }
+      
+      setErrorMessage(msg);
+      toast.error(msg);
+    } finally {
+      setIsProcessing(false);
+    }
+    if (finishingFileInputRef.current) finishingFileInputRef.current.value = '';
   };
 
   const handleSaveDraft = (e: React.FormEvent) => {
@@ -180,6 +238,14 @@ export function ElectiveSurgeries() {
             ref={fileInputRef} 
             className="hidden" 
             onChange={handleCapture} 
+          />
+          <input 
+            type="file" 
+            accept="image/*,application/pdf" 
+            capture="environment" 
+            ref={finishingFileInputRef} 
+            className="hidden" 
+            onChange={handleCaptureForFinishing} 
           />
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
             <button 
@@ -469,7 +535,7 @@ export function ElectiveSurgeries() {
               <p className="text-[10px] font-black uppercase tracking-[0.2em]">{processingMessage}</p>
            </div>
          ) : draftSurgery && (
-          <form onSubmit={handleSaveDraft} className="space-y-6" key={draftSurgery?.id || draftSurgery?.patientName || 'new-elective-draft'}>
+          <form onSubmit={handleSaveDraft} className="space-y-6" key={`${draftSurgery?.id || draftSurgery?.patientName || 'new-elective-draft'}-${formResetKey}`}>
             {(!draftSurgery.patientName && !draftSurgery.attendance && !draftSurgery.insurance) ? (
               <div className="p-3 bg-[#FCF8E3] border border-[#FBEED5] rounded-2xl flex items-start gap-2.5 text-[11px] text-[#C09853] leading-relaxed mb-1">
                 <span className="text-sm font-bold flex-shrink-0">⚠️</span>
@@ -551,7 +617,18 @@ export function ElectiveSurgeries() {
 
             {isFinishingSurgery && (
               <>
-                <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div className="border-t pt-4 flex justify-between items-center mb-2">
+                  <span className="text-[10px] font-black text-[#162744] uppercase tracking-wider">Dados Extras da Realização</span>
+                  <button
+                    type="button"
+                    onClick={() => finishingFileInputRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-zinc-200 hover:border-zinc-300 text-zinc-600 bg-zinc-50 hover:bg-zinc-100 rounded-xl text-[9px] font-black uppercase tracking-tight transition-all active:scale-95 cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-zinc-500" />
+                    <span>Completar com foto da etiqueta</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
                    <div>
                      <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">CONVÊNIO</label>
                      <input 
