@@ -30,6 +30,7 @@ interface ProposedUpdate {
   increment: number;
   procedure: string;
   date: string;
+  breakdown?: Record<string, number>;
 }
 
 export function PaymentReconciliation() {
@@ -38,6 +39,7 @@ export function PaymentReconciliation() {
   const [proposedUpdates, setProposedUpdates] = useState<ProposedUpdate[]>([]);
   const [acceptedIds, setAcceptedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // States for manual unmatched payment reconciliation
@@ -214,11 +216,11 @@ Nome do médico cadastrado: ${cleanDoctorName}
 
 Se não encontrar o médico cadastrado no relatório, extraia todos os pagamentos não-CLINICO visíveis.
 
-Para cada registro, extraia: nome_paciente, numero_atendimento (coluna Atendimento), valor (coluna Vl.Repasse, número decimal sem "R$"), data_atendimento (DD/MM/AA ou DD/MM/AAAA).
+Para cada registro, extraia: nome_paciente, numero_atendimento (coluna Atendimento), valor (coluna Vl.Repasse, número decimal sem "R$"), data_atendimento (DD/MM/AA ou DD/MM/AAAA) e o detalhamento por papel/atividade em breakdown (ex: {"CIRURGIAO": valor, "PRIMEIRO AUXILIAR": valor}).
 
 Se o MESMO atendimento tiver várias linhas (vários procedimentos), retorne cada linha separadamente — a soma é feita depois.
 
-Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimento}]}`,
+Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimento, breakdown: { [PAPEL]: valor }}]}`,
           schema: {
             type: 'object',
             properties: {
@@ -230,7 +232,11 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
                     nome_paciente: { type: 'string' },
                     numero_atendimento: { type: 'string' },
                     valor: { type: 'number' },
-                    data_atendimento: { type: 'string' }
+                    data_atendimento: { type: 'string' },
+                    breakdown: {
+                      type: 'object',
+                      additionalProperties: { type: 'number' }
+                    }
                   }
                 }
               }
@@ -253,7 +259,13 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
       // Agrupa por atendimento (ou nome+data se atendimento vier vazio) somando os
       // valores — necessário pois cirurgias com múltiplos procedimentos aparecem
       // em várias linhas do relatório e devem ser somadas num único pagamento.
-      const grupos = new Map<string, { nome_paciente: string, numero_atendimento: string, valor: number, data_atendimento: string }>();
+      const grupos = new Map<string, { 
+        nome_paciente: string, 
+        numero_atendimento: string, 
+        valor: number, 
+        data_atendimento: string,
+        breakdown: Record<string, number>
+      }>();
       resultados.forEach((r: any) => {
         const atd = String(r.numero_atendimento || '').trim();
         const chave = atd || `${(r.nome_paciente || '').toLowerCase().trim()}|${r.data_atendimento || ''}`;
@@ -261,12 +273,25 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
         const existing = grupos.get(chave);
         if (existing) {
           existing.valor += (r.valor || 0);
+          if (r.breakdown) {
+            for (const [k, v] of Object.entries(r.breakdown)) {
+              const val = typeof v === 'number' ? v : Number(v) || 0;
+              existing.breakdown[k] = (existing.breakdown[k] || 0) + val;
+            }
+          }
         } else {
+          const initialBreakdown: Record<string, number> = {};
+          if (r.breakdown) {
+            for (const [k, v] of Object.entries(r.breakdown)) {
+              initialBreakdown[k] = typeof v === 'number' ? v : Number(v) || 0;
+            }
+          }
           grupos.set(chave, {
             nome_paciente: r.nome_paciente || '',
             numero_atendimento: atd,
             valor: r.valor || 0,
-            data_atendimento: r.data_atendimento || ''
+            data_atendimento: r.data_atendimento || '',
+            breakdown: initialBreakdown
           });
         }
       });
@@ -285,7 +310,8 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
         atendimento: r.numero_atendimento,
         paciente: r.nome_paciente,
         pago: r.valor,
-        data: r.data_atendimento
+        data: r.data_atendimento,
+        breakdown: r.breakdown || {}
       }));
 
       const reconcileResponse = await fetch('https://audit-ai-6wed.onrender.com/api/reconcile/from-ids', {
@@ -317,7 +343,8 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
           newFees: (surgery.feesPaid || 0) + r.valorPago,
           increment: r.valorPago,
           procedure: surgery.procedure,
-          date: surgery.date
+          date: surgery.date,
+          breakdown: r.hospitalRecord?.breakdown || {}
         });
       });
 
@@ -465,7 +492,7 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
                     <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-tight mt-0.5 italic">Os valores encontrados serão somados aos valores atuais</div>
                   </div>
                   <button 
-                    onClick={handleAcceptAll}
+                    onClick={() => setShowConfirmModal(true)}
                     style={{ borderRadius: 12 }}
                     className="flex items-center gap-2 px-4 py-2 bg-[#162744] hover:bg-[#203a64] text-white text-[10px] font-black uppercase tracking-widest shadow-lg transition-all active:scale-95 cursor-pointer"
                   >
@@ -717,6 +744,97 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
             </div>
           </div>
         )}
+      </Dialog>
+
+      {/* Confirmation Modal with Breakdown */}
+      <Dialog
+        isOpen={showConfirmModal}
+        onClose={() => setShowConfirmModal(false)}
+        title="Confirmar Conciliação de Honorários"
+        size="md"
+      >
+        <div className="space-y-5">
+          <div className="p-4 bg-zinc-50 border border-zinc-150 rounded-2xl">
+            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block mb-1">Revisão do Lote</span>
+            <p className="text-xs text-zinc-600 font-medium leading-relaxed">
+              Você está prestes a conciliar e somar os honorários de <strong className="font-extrabold text-zinc-900">{filteredProposals.length} cirurgia(s)</strong> identificada(s) no relatório. Veja o detalhamento dos valores por função abaixo.
+            </p>
+          </div>
+
+          <div className="max-h-64 overflow-y-auto space-y-2.5 pr-1">
+            {filteredProposals.map((update) => {
+              const breakdownEntries = Object.entries(update.breakdown || {});
+              return (
+                <div key={update.surgeryId} className="p-3.5 border border-zinc-200 bg-zinc-50/30 rounded-2xl space-y-2">
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12px] font-black text-zinc-800 uppercase tracking-tight truncate">{update.patientName}</div>
+                      <div className="flex items-center gap-1.5 text-[8px] font-extrabold text-[#8592A6] uppercase tracking-widest mt-0.5">
+                        <span>{safeFormat(update.date, 'dd/MM/yyyy')}</span>
+                        <span className="w-1 h-1 rounded-full bg-zinc-200"></span>
+                        <span className="truncate">{update.procedure || 'Procedimento não inf.'}</span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-[8px] font-black text-zinc-400 uppercase tracking-widest block mb-0.5">Incremento</span>
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace" }} className="text-[11px] font-extrabold text-emerald-600 bg-emerald-50/50 border border-emerald-100 px-2 py-0.5 rounded-lg">
+                        +{formatCurrency(update.increment)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {breakdownEntries.length > 0 ? (
+                    <div className="pt-2 border-t border-zinc-100 space-y-1">
+                      <div className="text-[8px] font-extrabold text-zinc-400 uppercase tracking-widest mb-1">Detalhamento de Funções</div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 bg-white p-2 rounded-xl border border-zinc-100">
+                        {breakdownEntries.map(([role, val]) => (
+                          <div key={role} className="flex justify-between items-center text-[9px]">
+                            <span className="text-zinc-500 font-bold uppercase tracking-tight">{role}</span>
+                            <span style={{ fontFamily: "'JetBrains Mono', monospace" }} className="text-zinc-800 font-black">{formatCurrency(val)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pt-1.5 border-t border-zinc-100 flex justify-between items-center text-[9px] text-[#8592A6]">
+                      <span className="font-bold uppercase tracking-tight italic">Detalhamento não fornecido</span>
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace" }} className="font-bold">{formatCurrency(update.increment)}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="pt-4 border-t border-zinc-200 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="text-center sm:text-left">
+              <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block mb-1">Soma Total Incremental</span>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace" }} className="text-lg font-black text-zinc-900 block leading-none">
+                {formatCurrency(filteredProposals.reduce((sum, u) => sum + u.increment, 0))}
+              </span>
+            </div>
+
+            <div className="flex gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => setShowConfirmModal(false)}
+                className="flex-1 sm:flex-initial px-4 py-2.5 border border-zinc-200 hover:border-zinc-300 text-zinc-600 font-black text-[9px] uppercase tracking-wider rounded-xl transition-all cursor-pointer active:scale-95"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowConfirmModal(false);
+                  await handleAcceptAll();
+                }}
+                className="flex-1 sm:flex-initial px-4 py-2.5 bg-[#162744] hover:bg-[#203a64] text-white font-black text-[9px] uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer active:scale-95"
+              >
+                Confirmar e Somar
+              </button>
+            </div>
+          </div>
+        </div>
       </Dialog>
     </div>
   );
