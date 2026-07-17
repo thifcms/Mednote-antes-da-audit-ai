@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { PageHeader } from '../components/PageHeader';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,10 +30,69 @@ import { format, parseISO, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import Papa from 'papaparse';
 import { extractInvoiceDetails, extractSurgeryLabel } from '../services/ai';
+import { Dialog } from '../components/ui/Dialog';
 
 export function Dashboard() {
-  const { data, addInvoice, addSurgery } = useApp();
+  const { data, user, addInvoice, addSurgery } = useApp();
   const navigate = useNavigate();
+
+  const [pendingCandidates, setPendingCandidates] = useState<any[]>([]);
+  const [reviewingCandidate, setReviewingCandidate] = useState<any | null>(null);
+
+  useEffect(() => {
+    async function fetchPendingCandidates() {
+      try {
+        const response = await fetch('https://audit-ai-6wed.onrender.com/api/learning/format-candidates/pending', {
+          headers: {
+            'x-api-key': 'auditai_key_2026_medico'
+          }
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          if (resData.success) {
+            setPendingCandidates(resData.candidates || []);
+          }
+        }
+      } catch (err) {
+        console.error('Erro ao buscar candidatos pendentes:', err);
+      }
+    }
+    fetchPendingCandidates();
+  }, []);
+
+  const handleReviewCandidate = async (approved: boolean) => {
+    if (!reviewingCandidate) return;
+    
+    try {
+      const reviewedBy = data?.doctorName || user?.displayName || 'Thiago Andre de Oliveira Santos';
+      
+      const response = await fetch(`https://audit-ai-6wed.onrender.com/api/learning/format-candidates/${reviewingCandidate.id}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'auditai_key_2026_medico'
+        },
+        body: JSON.stringify({
+          approved,
+          reviewedBy
+        })
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error('Erro na resposta do review:', errText);
+        toast.error("Erro ao registrar a revisão. Tente novamente.");
+        return;
+      }
+
+      toast.success("Obrigado pela revisão!");
+      setPendingCandidates(prev => prev.filter(c => c.id !== reviewingCandidate.id));
+      setReviewingCandidate(null);
+    } catch (err) {
+      console.error('Erro ao enviar revisão de candidato:', err);
+      toast.error("Falha de conexão ao enviar a revisão.");
+    }
+  };
   
   if (!data) return <div className="flex items-center justify-center h-full text-zinc-500 font-bold uppercase text-xs tracking-widest">Carregando dados...</div>;
   const [isExtracting, setIsExtracting] = useState(false);
@@ -236,6 +295,32 @@ export function Dashboard() {
       </PageHeader>
 
       <main className="flex-1 p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full">
+        {pendingCandidates.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 md:p-5 bg-amber-50 border border-amber-200 rounded-[20px] shadow-sm animate-fade-in"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-[11px] font-black text-amber-950 uppercase tracking-widest">Formatos de Relatório Pendentes</h4>
+                <p className="text-xs text-amber-800 font-medium mt-0.5">
+                  📄 Detectamos <strong className="font-extrabold">{pendingCandidates.length}</strong> novo(s) formato(s) de relatório. Revisar dados extraídos
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setReviewingCandidate(pendingCandidates[0])}
+              className="px-4 py-2.5 bg-[#162744] hover:bg-[#203a64] text-white text-[9px] font-black uppercase tracking-widest rounded-xl shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+            >
+              Revisar
+            </button>
+          </motion.div>
+        )}
+
         {/* Main Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           
@@ -461,6 +546,73 @@ export function Dashboard() {
              </button>
           </form>
         </DialogDraft>
+      )}
+
+      {reviewingCandidate && (
+        <Dialog
+          isOpen={!!reviewingCandidate}
+          onClose={() => setReviewingCandidate(null)}
+          title="Revisar Novo Formato de Relatório"
+          size="lg"
+        >
+          <div className="space-y-4">
+            <div className="p-4 bg-amber-50/60 border border-amber-100 rounded-2xl">
+              <span className="text-[9px] font-black text-amber-800 uppercase tracking-widest block mb-1">Nota de Treinamento</span>
+              <p className="text-xs text-amber-900 font-medium leading-relaxed">
+                Este é um formato de relatório que o sistema ainda não reconhece automaticamente. Confira se os dados abaixo foram extraídos corretamente.
+              </p>
+            </div>
+
+            <div className="max-h-64 overflow-y-auto space-y-2.5 pr-1">
+              {reviewingCandidate.resultadosSample && reviewingCandidate.resultadosSample.length > 0 ? (
+                reviewingCandidate.resultadosSample.map((paciente: any, index: number) => (
+                  <div key={index} className="p-3 border border-zinc-200 bg-white rounded-xl flex items-center justify-between gap-3 shadow-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-black text-zinc-800 uppercase tracking-tight truncate">{paciente.nome_paciente || 'Sem nome'}</div>
+                      <div className="flex items-center gap-1.5 text-[8px] font-extrabold text-[#8592A6] uppercase tracking-widest mt-0.5">
+                        <span>Atd: {paciente.numero_atendimento || 'Não inf.'}</span>
+                        {paciente.data_atendimento && (
+                          <>
+                            <span className="w-1 h-1 rounded-full bg-zinc-200"></span>
+                            <span>{paciente.data_atendimento}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="shrink-0">
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace" }} className="text-[11px] font-black text-zinc-900 bg-zinc-50 border border-zinc-100 px-2 py-1 rounded-lg">
+                        {formatCurrency(paciente.valor)}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-6 text-center text-zinc-400 italic text-[11px] border border-dashed border-zinc-200 rounded-xl">
+                  Nenhum dado de paciente extraído nesta amostra.
+                </div>
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-zinc-200 flex gap-3">
+              <button
+                type="button"
+                onClick={() => handleReviewCandidate(false)}
+                className="flex-1 px-4 py-3 border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 font-black text-[9px] uppercase tracking-wider rounded-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+              >
+                <X className="w-3.5 h-3.5" />
+                Dados Incorretos
+              </button>
+              <button
+                type="button"
+                onClick={() => handleReviewCandidate(true)}
+                className="flex-1 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[9px] uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                Dados Corretos
+              </button>
+            </div>
+          </div>
+        </Dialog>
       )}
     </motion.div>
   );
