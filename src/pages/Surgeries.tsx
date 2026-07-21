@@ -13,6 +13,7 @@ import {
   saveMappingToCloud 
 } from '../services/excelMapping';
 import { Plus, Camera, Search, Loader2, Download, FileSpreadsheet, ChevronRight, ChevronLeft, ClipboardCopy, Info, X, Trash2, MessageCircle, Mail, Share2, Edit2, Image as ImageIcon, Maximize2, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { useTussLookup } from '../lib/tussLookup';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -357,6 +358,34 @@ export function Surgeries() {
     indication: '',
     procedure: ''
   });
+  const [tussInput, setTussInput] = useState('');
+  const { lookup: lookupTuss, isLoading: tussLoading } = useTussLookup();
+
+  const handleAddTussCode = () => {
+    const code = tussInput.trim();
+    if (!code) return;
+    if (!/^\d{8}$/.test(code)) {
+      toast.error('Código TUSS deve ter 8 dígitos.');
+      return;
+    }
+    const current: string[] = draftSurgery?.tussCodes || [];
+    if (current.includes(code)) {
+      toast.error('Esse código já foi adicionado.');
+      return;
+    }
+    const procName = lookupTuss(code);
+    if (!procName) {
+      toast.error(`Código ${code} não encontrado na tabela TUSS. Confira o número.`);
+      return;
+    }
+    setDraftSurgery((prev: any) => ({ ...prev, tussCodes: [...current, code] }));
+    setTussInput('');
+  };
+
+  const handleRemoveTussCode = (code: string) => {
+    const current: string[] = draftSurgery?.tussCodes || [];
+    setDraftSurgery((prev: any) => ({ ...prev, tussCodes: current.filter((c: string) => c !== code) }));
+  };
   const [activeSuggestionField, setActiveSuggestionField] = useState<'indication' | 'procedure' | null>(null);
 
   React.useEffect(() => {
@@ -1375,11 +1404,9 @@ export function Surgeries() {
         receivedAmount, 
         hospitalId, 
         notes: existing?.notes || '',
-        aiSourceHash: draftSurgery.aiSourceHash || existing?.aiSourceHash || ''
+        aiSourceHash: draftSurgery.aiSourceHash || existing?.aiSourceHash || '',
+        tussCodes: draftSurgery.tussCodes || existing?.tussCodes || []
       };
-      
-      console.log("PAYLOAD ENVIADO (Update Surgery):", updatePayload);
-      toast.info(`Enviando update: ${JSON.stringify(updatePayload).substring(0, 80)}...`);
 
       updateSurgery(draftSurgery.id, updatePayload);
       toast.success("Cirurgia atualizada com sucesso!");
@@ -1399,7 +1426,8 @@ export function Surgeries() {
         isParticular: false, 
         particularValue: 0, 
         photos: [],
-        aiSourceHash: draftSurgery.aiSourceHash || ''
+        aiSourceHash: draftSurgery.aiSourceHash || '',
+        tussCodes: draftSurgery.tussCodes || []
       });
       toast.success("Cirurgia registrada com sucesso!");
     }
@@ -2262,6 +2290,45 @@ export function Surgeries() {
                     </div>
                   )}
                </div>
+            </div>
+
+            <div>
+              <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">CÓDIGOS TUSS (OPCIONAL)</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={tussInput}
+                  onChange={(e) => setTussInput(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTussCode(); } }}
+                  placeholder={tussLoading ? "Carregando tabela..." : "Ex: 31403034"}
+                  disabled={tussLoading}
+                  className="flex-1 p-3 text-xs font-bold border rounded-2xl disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddTussCode}
+                  disabled={tussLoading}
+                  className="px-4 text-xs font-black text-white bg-[#162744] disabled:opacity-50 rounded-2xl"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+              {(draftSurgery.tussCodes || []).length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {(draftSurgery.tussCodes || []).map((code: string) => (
+                    <div key={code} className="flex items-center justify-between gap-2 p-2 bg-zinc-50 rounded-xl border border-zinc-150">
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-black text-[#B8962E]">{code}</span>
+                        <p className="text-[10px] font-semibold text-zinc-600 truncate">{lookupTuss(code) || 'Procedimento não identificado'}</p>
+                      </div>
+                      <button type="button" onClick={() => handleRemoveTussCode(code)} className="shrink-0 text-zinc-400 hover:text-red-500">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
                <div><label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">CONVÊNIO</label><input name="insurance" type="text" defaultValue={draftSurgery.insurance || ''} className="w-full p-3 text-xs font-bold border rounded-2xl" /></div>
