@@ -326,6 +326,11 @@ export function Surgeries() {
       isLocalOCR: item.status === 'completed_low_confidence'
     });
     setIsModalOpen(true);
+
+    const r: any = item.result;
+    if (!r.patientName && !r.attendance && !r.insurance) {
+      toast.warning('Leitura automática parcial ou indisponível. Preencha os campos manualmente.', { duration: 5000 });
+    }
   };
 
   const handleCloseModal = () => {

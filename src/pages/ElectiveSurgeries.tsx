@@ -94,6 +94,10 @@ export function ElectiveSurgeries() {
         date: extracted.date || new Date().toISOString().split('T')[0]
       });
       setFormResetKey(prev => prev + 1);
+
+      if (!extracted.patientName && !extracted.attendance && !extracted.insurance) {
+        toast.warning('Leitura automática parcial ou indisponível. Preencha os campos manualmente.', { duration: 5000 });
+      }
     } catch (err: any) {
       console.error(err);
       let msg = isPdf 
