@@ -146,7 +146,7 @@ export function PaymentReconciliation() {
           h.includes('VALOR') || h.includes('REPASSE') || h.includes('PAGO') || h.includes('LIQUIDO') || h.includes('BRUTO')
         );
         const doctorCol = headers.findIndex(h => 
-          h.includes('MEDICO') || h.includes('PROFISSIONAL') || h.includes('PRESTADOR') || h.includes('THIAGO')
+          h.includes('MEDICO') || h.includes('PROFISSIONAL') || h.includes('PRESTADOR')
         );
 
         if (patientCol === -1 || valueCol === -1) {
@@ -155,10 +155,17 @@ export function PaymentReconciliation() {
           return;
         }
 
-        const rawDoctorName = data.doctorName || "THIAGO ANDRE DE OLIVEIRA SANTOS";
+        const rawDoctorName = data.doctorName || '';
+        if (!rawDoctorName.trim()) {
+          setError('Nome do médico não cadastrado. Preencha em Configurações antes de conciliar pagamentos.');
+          setIsProcessing(false);
+          return;
+        }
         const cleanDoctorName = rawDoctorName.replace(/^(dr\s+|dra\s+|dr\.\s+|dra\.\s+)/i, '').trim().toUpperCase();
         
-        // Filter rows by doctor name if the column exists
+        // Filtra linhas pelo nome do médico. Se a coluna existir mas NENHUMA linha bater,
+        // NÃO cai pra "todas as linhas" (isso misturaria pagamentos de outros médicos) —
+        // trata como planilha sem registros correspondentes.
         let sourceRows = rows;
         if (doctorCol !== -1) {
           const doctorRows = rows.filter(row => {
@@ -166,8 +173,11 @@ export function PaymentReconciliation() {
             return val.includes(cleanDoctorName) || 
                    (cleanDoctorName.length > 10 && val.includes(cleanDoctorName.substring(0, 15)));
           });
-          if (doctorRows.length > 0) {
-            sourceRows = doctorRows;
+          sourceRows = doctorRows;
+          if (doctorRows.length === 0) {
+            setError(`Nenhum registro encontrado para "${cleanDoctorName}" nesta planilha. Verifique se o nome cadastrado bate com o que aparece na coluna de médico/prestador.`);
+            setIsProcessing(false);
+            return;
           }
         }
 
