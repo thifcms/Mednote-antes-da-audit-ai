@@ -1,11 +1,12 @@
-const CACHE_NAME = 'mednote-v1';
+const CACHE_NAME = 'mednote-v2';
+const BASE = '/Mednote-antes-da-audit-ai/';
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icon.svg',
-  '/icon-192.png',
-  '/icon.png'
+  BASE,
+  BASE + 'index.html',
+  BASE + 'manifest.json',
+  BASE + 'icon.svg',
+  BASE + 'icon-192.png',
+  BASE + 'icon.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -33,7 +34,7 @@ self.addEventListener('fetch', (e) => {
   // Navigation fallback to index.html for SPA
   if (e.request.mode === 'navigate') {
     e.respondWith(
-      fetch(e.request).catch(() => caches.match('/index.html'))
+      fetch(e.request).catch(() => caches.match(BASE + 'index.html'))
     );
     return;
   }
