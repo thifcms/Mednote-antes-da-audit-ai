@@ -851,6 +851,8 @@ TABELA DE AGENDA (use SOMENTE se identificar explicitamente múltiplos pacientes
 
 FOLHA CIRÚRGICA: extraia dados do cabeçalho. NUNCA confunda cirurgião ("Cirurgião:", "Dr.") com nome do paciente ("Paciente:", "Nome:", "Beneficiário:").
 
+CÓDIGOS TUSS: se houver algum código numérico de 8 dígitos rotulado como "TUSS", "Código TUSS", "Cód. Procedimento" ou próximo à descrição de um procedimento cirúrgico, extraia todos que encontrar em tussCodes (lista de strings, cada uma com exatamente 8 dígitos). Se não houver nenhum visível, retorne lista vazia — NUNCA invente ou adivinhe um código.
+
 DADOS ILEGÍVEIS: se completamente ilegível por reflexo ou rasura severa, deixe o campo vazio. Para dados parcialmente visíveis, tente reconstruir.`;
 
     const schema = {
@@ -862,7 +864,8 @@ DADOS ILEGÍVEIS: se completamente ilegível por reflexo ou rasura severa, deixe
         insurance: { type: "string" },
         attendance: { type: "string" },
         company: { type: "string" },
-        hospital: { type: "string" }
+        hospital: { type: "string" },
+        tussCodes: { type: "array", items: { type: "string" }, description: "Códigos TUSS de 8 dígitos encontrados no documento, se houver" }
       }
     };
 
@@ -873,6 +876,10 @@ DADOS ILEGÍVEIS: se completamente ilegível por reflexo ou rasura severa, deixe
     // Função local para normalizar os dados extraídos independente do formato de resposta da API
     const normalize = (res: any) => {
       if (!res) return null;
+      const rawCodes = res.tussCodes || res.codigos_tuss || [];
+      const tussCodes = Array.isArray(rawCodes)
+        ? rawCodes.filter((c: any) => /^\d{8}$/.test(String(c || '').trim())).map((c: any) => String(c).trim())
+        : [];
       return {
         patientName: res.patientName || res.nome_paciente || '',
         attendance: res.attendance || res.numero_atendimento || '',
@@ -884,7 +891,8 @@ DADOS ILEGÍVEIS: se completamente ilegível por reflexo ou rasura severa, deixe
         aiSourceHash: res.aiSourceHash || '',
         _usedModel: res._usedModel || '',
         _quotaExhausted: res._quotaExhausted || false,
-        isLocalOCR: res.isLocalOCR || false
+        isLocalOCR: res.isLocalOCR || false,
+        tussCodes
       };
     };
 

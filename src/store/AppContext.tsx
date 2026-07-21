@@ -86,6 +86,7 @@ export type Surgery = {
   createdAt: string;
   userId: string;
   aiSourceHash?: string;
+  tussCodes?: string[];
 };
 
 export type ElectiveSurgery = {
@@ -100,6 +101,7 @@ export type ElectiveSurgery = {
   createdAt: string;
   userId: string;
   aiSourceHash?: string;
+  tussCodes?: string[];
 };
 
 export type CancelledSurgery = {
