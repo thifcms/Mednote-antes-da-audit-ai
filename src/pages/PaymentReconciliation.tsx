@@ -766,6 +766,16 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
                   </div>
                 )}
             </div>
+
+            <div className="pt-3 border-t border-zinc-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => { setReconcilingPayment(null); setSurgerySearchText(''); }}
+                className="px-4 py-2.5 border border-zinc-200 hover:border-zinc-300 text-zinc-600 font-black text-[9px] uppercase tracking-wider rounded-xl transition-all cursor-pointer active:scale-95"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         )}
       </Dialog>
@@ -826,12 +836,31 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
                     </div>
                   )}
 
-                  {(update.codigosEsperados || []).length > 0 && (() => {
+                  {((update.codigosEsperados || []).length > 0 || (update.codigosPagos || []).length > 0) && (() => {
                     const esperados = update.codigosEsperados || [];
                     const pagos = update.codigosPagos || [];
                     const conferidos = esperados.filter(c => pagos.includes(c));
                     const faltando = esperados.filter(c => !pagos.includes(c));
                     const extras = pagos.filter(c => !esperados.includes(c));
+
+                    const handleRemoveEsperado = async (code: string) => {
+                      const surgery = data.surgeries?.find(s => s.id === update.surgeryId);
+                      if (!surgery) return;
+                      const novosCodigos = (surgery.tussCodes || []).filter(c => c !== code);
+                      await updateSurgery(update.surgeryId, { tussCodes: novosCodigos });
+                      toast.success(`Código ${code} removido da solicitação.`);
+                    };
+
+                    const handleAceitarExtra = async (code: string) => {
+                      const surgery = data.surgeries?.find(s => s.id === update.surgeryId);
+                      if (!surgery) return;
+                      const jaTem = (surgery.tussCodes || []).includes(code);
+                      if (jaTem) return;
+                      const novosCodigos = [...(surgery.tussCodes || []), code];
+                      await updateSurgery(update.surgeryId, { tussCodes: novosCodigos });
+                      toast.success(`Código ${code} registrado na cirurgia.`);
+                    };
+
                     return (
                       <div className="pt-2 border-t border-zinc-100 space-y-1">
                         <div className="text-[8px] font-extrabold text-zinc-400 uppercase tracking-widest mb-1">Conferência de Códigos TUSS</div>
@@ -847,14 +876,30 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
                             <div key={`falta-${c}`} className="flex items-center gap-1.5 text-[9px] bg-amber-50/60 border border-amber-100 px-2 py-1 rounded-lg">
                               <Info className="w-3 h-3 text-amber-600 shrink-0" />
                               <span className="text-amber-700 font-bold">{c}</span>
-                              <span className="text-amber-600/70">esperado, não encontrado no pagamento</span>
+                              <span className="text-amber-600/70 flex-1">esperado, não encontrado no pagamento</span>
+                              <button
+                                type="button"
+                                title="Remover este código da solicitação"
+                                onClick={() => handleRemoveEsperado(c)}
+                                className="shrink-0 text-amber-500 hover:text-red-500"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
                             </div>
                           ))}
                           {extras.map(c => (
                             <div key={`extra-${c}`} className="flex items-center gap-1.5 text-[9px] bg-blue-50/60 border border-blue-100 px-2 py-1 rounded-lg">
                               <Info className="w-3 h-3 text-blue-600 shrink-0" />
                               <span className="text-blue-700 font-bold">{c}</span>
-                              <span className="text-blue-600/70">pago, não estava na solicitação — confira</span>
+                              <span className="text-blue-600/70 flex-1">pago, não estava na solicitação — confira</span>
+                              <button
+                                type="button"
+                                title="Registrar este código na cirurgia (não mostrar mais como extra)"
+                                onClick={() => handleAceitarExtra(c)}
+                                className="shrink-0 text-blue-500 hover:text-emerald-600"
+                              >
+                                <Check className="w-3 h-3" />
+                              </button>
                             </div>
                           ))}
                         </div>
