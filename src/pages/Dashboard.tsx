@@ -38,6 +38,10 @@ export function Dashboard() {
 
   const [pendingCandidates, setPendingCandidates] = useState<any[]>([]);
   const [reviewingCandidate, setReviewingCandidate] = useState<any | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [draftInvoice, setDraftInvoice] = useState<any>(null);
+  const [draftSurgery, setDraftSurgery] = useState<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     async function fetchPendingCandidates() {
@@ -95,11 +99,6 @@ export function Dashboard() {
   };
   
   if (!data) return <div className="flex items-center justify-center h-full text-zinc-500 font-bold uppercase text-xs tracking-widest">Carregando dados...</div>;
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [draftInvoice, setDraftInvoice] = useState<any>(null);
-  const [draftSurgery, setDraftSurgery] = useState<any>(null);
-  
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const totalBilled = data.invoices.reduce((acc, inv) => acc + (inv.netAmount || inv.amount || 0), 0);
   const totalReceived = data.payments.filter(p => (p.amount || 0) > 0).reduce((acc, p) => acc + (p.amount || 0), 0);
