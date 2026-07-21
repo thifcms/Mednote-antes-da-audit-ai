@@ -2190,15 +2190,7 @@ export function Surgeries() {
           </div>
         ) : draftSurgery ? (
           <form onSubmit={handleSaveDraft} className="space-y-6" key={draftSurgery.id || draftSurgery.patientName || 'new-draft'}>
-            {(!draftSurgery.patientName && !draftSurgery.attendance && !draftSurgery.insurance) ? (
-              <div className="p-3 bg-[#FCF8E3] border border-[#FBEED5] rounded-2xl flex items-start gap-2.5 text-[11px] text-[#C09853] leading-relaxed">
-                <span className="text-sm font-bold flex-shrink-0">⚠️</span>
-                <div>
-                  <p className="font-black uppercase tracking-wider text-[9px] mb-0.5">Leitura automática parcial ou indisponível</p>
-                  <p className="opacity-90">Não foi possível ler as informações legíveis por completo. Por favor, preencha ou complemente os campos manualmente abaixo.</p>
-                </div>
-              </div>
-            ) : draftSurgery.isLocalOCR ? (
+            {(!draftSurgery.patientName && !draftSurgery.attendance && !draftSurgery.insurance) ? null : draftSurgery.isLocalOCR ? (
               <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-[11px] text-amber-800 leading-relaxed shadow-sm">
                 <span className="text-sm font-bold flex-shrink-0 text-amber-600">⚠️</span>
                 <div>
