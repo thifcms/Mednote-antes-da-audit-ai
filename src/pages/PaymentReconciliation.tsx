@@ -16,7 +16,8 @@ import {
   User,
   ArrowRight,
   Camera,
-  FileText
+  FileText,
+  Info
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -31,6 +32,8 @@ interface ProposedUpdate {
   procedure: string;
   date: string;
   breakdown?: Record<string, number>;
+  codigosEsperados?: string[];
+  codigosPagos?: string[];
 }
 
 export function PaymentReconciliation() {
@@ -229,11 +232,11 @@ IMPORTANTE: extraia APENAS os registros CIRURGICOS (procedimentos com atividade 
 
 Nome do médico cadastrado: ${cleanDoctorName}
 
-Para cada registro, extraia: nome_paciente, numero_atendimento (coluna Atendimento), valor (coluna Vl.Repasse, número decimal sem "R$"), data_atendimento (DD/MM/AA ou DD/MM/AAAA) e o detalhamento por papel/atividade em breakdown (ex: {"CIRURGIAO": valor, "PRIMEIRO AUXILIAR": valor}).
+Para cada registro, extraia: nome_paciente, numero_atendimento (coluna Atendimento), valor (coluna Vl.Repasse, número decimal sem "R$"), data_atendimento (DD/MM/AA ou DD/MM/AAAA), codigo_tuss (coluna de código do procedimento, 8 dígitos, se houver) e o detalhamento por papel/atividade em breakdown (ex: {"CIRURGIAO": valor, "PRIMEIRO AUXILIAR": valor}).
 
 Se o MESMO atendimento tiver várias linhas (vários procedimentos), retorne cada linha separadamente — a soma é feita depois.
 
-Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimento, breakdown: { [PAPEL]: valor }}]}`,
+Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimento, codigo_tuss, breakdown: { [PAPEL]: valor }}]}`,
           schema: {
             type: 'object',
             properties: {
@@ -246,6 +249,7 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
                     numero_atendimento: { type: 'string' },
                     valor: { type: 'number' },
                     data_atendimento: { type: 'string' },
+                    codigo_tuss: { type: 'string' },
                     breakdown: {
                       type: 'object',
                       additionalProperties: { type: 'number' }
@@ -277,15 +281,18 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
         numero_atendimento: string, 
         valor: number, 
         data_atendimento: string,
-        breakdown: Record<string, number>
+        breakdown: Record<string, number>,
+        codigosPagos: string[]
       }>();
       resultados.forEach((r: any) => {
         const atd = String(r.numero_atendimento || '').trim();
         const chave = atd || `${(r.nome_paciente || '').toLowerCase().trim()}|${r.data_atendimento || ''}`;
         if (!atd && !(r.nome_paciente || '').trim()) return;
+        const codigo = String(r.codigo_tuss || '').trim();
         const existing = grupos.get(chave);
         if (existing) {
           existing.valor += (r.valor || 0);
+          if (codigo && !existing.codigosPagos.includes(codigo)) existing.codigosPagos.push(codigo);
           if (r.breakdown) {
             for (const [k, v] of Object.entries(r.breakdown)) {
               const val = typeof v === 'number' ? v : Number(v) || 0;
@@ -304,7 +311,8 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
             numero_atendimento: atd,
             valor: r.valor || 0,
             data_atendimento: r.data_atendimento || '',
-            breakdown: initialBreakdown
+            breakdown: initialBreakdown,
+            codigosPagos: codigo ? [codigo] : []
           });
         }
       });
@@ -324,7 +332,8 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
         paciente: r.nome_paciente,
         pago: r.valor,
         data: r.data_atendimento,
-        breakdown: r.breakdown || {}
+        breakdown: r.breakdown || {},
+        codigosPagos: r.codigosPagos || []
       }));
 
       const reconcileResponse = await fetch('https://audit-ai-6wed.onrender.com/api/reconcile/from-ids', {
@@ -357,7 +366,9 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
           increment: r.valorPago,
           procedure: surgery.procedure,
           date: surgery.date,
-          breakdown: r.hospitalRecord?.breakdown || {}
+          breakdown: r.hospitalRecord?.breakdown || {},
+          codigosEsperados: surgery.tussCodes || [],
+          codigosPagos: r.hospitalRecord?.codigosPagos || []
         });
       });
 
@@ -814,6 +825,42 @@ Retorne: {resultados: [{nome_paciente, numero_atendimento, valor, data_atendimen
                       <span style={{ fontFamily: "'JetBrains Mono', monospace" }} className="font-bold">{formatCurrency(update.increment)}</span>
                     </div>
                   )}
+
+                  {(update.codigosEsperados || []).length > 0 && (() => {
+                    const esperados = update.codigosEsperados || [];
+                    const pagos = update.codigosPagos || [];
+                    const conferidos = esperados.filter(c => pagos.includes(c));
+                    const faltando = esperados.filter(c => !pagos.includes(c));
+                    const extras = pagos.filter(c => !esperados.includes(c));
+                    return (
+                      <div className="pt-2 border-t border-zinc-100 space-y-1">
+                        <div className="text-[8px] font-extrabold text-zinc-400 uppercase tracking-widest mb-1">Conferência de Códigos TUSS</div>
+                        <div className="space-y-1">
+                          {conferidos.map(c => (
+                            <div key={`ok-${c}`} className="flex items-center gap-1.5 text-[9px] bg-emerald-50/60 border border-emerald-100 px-2 py-1 rounded-lg">
+                              <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                              <span className="text-emerald-700 font-bold">{c}</span>
+                              <span className="text-emerald-600/70">pago conforme esperado</span>
+                            </div>
+                          ))}
+                          {faltando.map(c => (
+                            <div key={`falta-${c}`} className="flex items-center gap-1.5 text-[9px] bg-amber-50/60 border border-amber-100 px-2 py-1 rounded-lg">
+                              <Info className="w-3 h-3 text-amber-600 shrink-0" />
+                              <span className="text-amber-700 font-bold">{c}</span>
+                              <span className="text-amber-600/70">esperado, não encontrado no pagamento</span>
+                            </div>
+                          ))}
+                          {extras.map(c => (
+                            <div key={`extra-${c}`} className="flex items-center gap-1.5 text-[9px] bg-blue-50/60 border border-blue-100 px-2 py-1 rounded-lg">
+                              <Info className="w-3 h-3 text-blue-600 shrink-0" />
+                              <span className="text-blue-700 font-bold">{c}</span>
+                              <span className="text-blue-600/70">pago, não estava na solicitação — confira</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
