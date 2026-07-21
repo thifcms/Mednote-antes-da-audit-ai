@@ -191,7 +191,11 @@ export function PaymentReconciliation() {
 
   const handleDocumentWithAI = async (file: File) => {
     try {
-      const rawDoctorName = data.doctorName || user?.displayName || 'THIAGO ANDRE DE OLIVEIRA SANTOS';
+      const rawDoctorName = data.doctorName || user?.displayName || '';
+      if (!rawDoctorName.trim()) {
+        toast.error('Nome do médico não cadastrado. Preencha em Configurações antes de conciliar pagamentos.');
+        return;
+      }
       const cleanDoctorName = rawDoctorName.replace(/^(dr\s+|dra\s+|dr\.\s+|dra\.\s+)/i, '').trim();
 
       const base64 = await new Promise<string>((resolve) => {
@@ -208,13 +212,12 @@ export function PaymentReconciliation() {
           fileBase64: base64,
           filename: file.name || 'relatorio.pdf',
           mimeType: file.type || 'application/pdf',
-          prompt: `Este é um relatório de repasse médico hospitalar (formato SOULMV ou similar). A tabela tem colunas como: Conta | Atendimento | Paciente | Atividade | Convênio | Data | Vl.Repasse.
+          expectedType: 'orttram',
+          prompt: `Este é um relatório de repasse médico hospitalar (formato SOULMV, ORTTRAM ou similar). A tabela tem colunas como: Conta | Atendimento | Paciente | Atividade | Convênio | Data | Vl.Repasse.
 
-IMPORTANTE: extraia APENAS os registros onde a coluna "Atividade" seja DIFERENTE de "CLINICO" (ou seja: CIRURGIAO, PRIMEIRO AUXILIAR, SEGUNDO AUXILIAR, ANESTESISTA, INSTRUMENTADOR, ou qualquer atividade cirúrgica — ignore apenas CLINICO).
+IMPORTANTE: extraia APENAS os registros CIRURGICOS (procedimentos com atividade diferente de "CLINICO": CIRURGIAO, PRIMEIRO AUXILIAR, SEGUNDO AUXILIAR, ANESTESISTA, INSTRUMENTADOR).
 
 Nome do médico cadastrado: ${cleanDoctorName}
-
-Se não encontrar o médico cadastrado no relatório, extraia todos os pagamentos não-CLINICO visíveis.
 
 Para cada registro, extraia: nome_paciente, numero_atendimento (coluna Atendimento), valor (coluna Vl.Repasse, número decimal sem "R$"), data_atendimento (DD/MM/AA ou DD/MM/AAAA) e o detalhamento por papel/atividade em breakdown (ex: {"CIRURGIAO": valor, "PRIMEIRO AUXILIAR": valor}).
 
