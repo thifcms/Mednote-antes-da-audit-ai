@@ -154,7 +154,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidSurgery(incoming());
         allow update: if isOwner(userId) && isValidSurgery(incoming()) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'indication', 'insurance', 'attendance', 'company', 'feesPaid', 'receivedAmount', 'hospitalId', 'hospitalName', 'notes', 'isParticular', 'particularValue', 'photos', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'indication', 'insurance', 'attendance', 'company', 'feesPaid', 'receivedAmount', 'hospitalId', 'hospitalName', 'notes', 'isParticular', 'particularValue', 'photos', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt', 'tussCodes']);
         allow delete: if isOwner(userId);
       }
 
@@ -163,7 +163,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidElectiveSurgery(incoming());
         allow update: if isOwner(userId) && isValidElectiveSurgery(incoming()) &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id', 'aiSourceHash', 'updatedAt', 'tussCodes']);
         allow delete: if isOwner(userId);
       }
 
@@ -172,7 +172,7 @@ service cloud.firestore {
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidCancelledSurgery(incoming());
         allow update: if isOwner(userId) && isValidCancelledSurgery(incoming()) &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id', 'aiSourceHash', 'cancellationReason', 'cancelledAt', 'updatedAt']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['date', 'patientName', 'procedure', 'hospitalId', 'isParticular', 'particularValue', 'userId', 'createdAt', 'id', 'aiSourceHash', 'cancellationReason', 'cancelledAt', 'updatedAt', 'tussCodes']);
         allow delete: if isOwner(userId);
       }
 
