@@ -40,6 +40,7 @@ export function Dashboard() {
 
   const [pendingCandidates, setPendingCandidates] = useState<any[]>([]);
   const [reviewingCandidate, setReviewingCandidate] = useState<any | null>(null);
+  const [candidateSample, setCandidateSample] = useState<any[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [draftInvoice, setDraftInvoice] = useState<any>(null);
   const [draftSurgery, setDraftSurgery] = useState<any>(null);
@@ -70,7 +71,7 @@ export function Dashboard() {
     if (!reviewingCandidate) return;
     
     try {
-      const reviewedBy = data?.doctorName || user?.displayName || 'Thiago Andre de Oliveira Santos';
+      const reviewedBy = data?.doctorName || user?.displayName || 'Médico MedNote';
       
       const response = await fetch(`https://audit-ai-6wed.onrender.com/api/learning/format-candidates/${reviewingCandidate.id}/review`, {
         method: 'POST',
@@ -80,7 +81,8 @@ export function Dashboard() {
         },
         body: JSON.stringify({
           approved,
-          reviewedBy
+          reviewedBy,
+          correctedSample: candidateSample
         })
       });
 
@@ -94,6 +96,7 @@ export function Dashboard() {
       toast.success("Obrigado pela revisão!");
       setPendingCandidates(prev => prev.filter(c => c.id !== reviewingCandidate.id));
       setReviewingCandidate(null);
+      setCandidateSample([]);
     } catch (err) {
       console.error('Erro ao enviar revisão de candidato:', err);
       toast.error("Falha de conexão ao enviar a revisão.");
@@ -365,7 +368,7 @@ export function Dashboard() {
               </div>
             </div>
             <button 
-              onClick={() => setReviewingCandidate(pendingCandidates[0])}
+              onClick={() => { setReviewingCandidate(pendingCandidates[0]); setCandidateSample(pendingCandidates[0].resultadosSample || []); }}
               className="px-4 py-2.5 bg-[#162744] hover:bg-[#203a64] text-white text-[9px] font-black uppercase tracking-widest rounded-xl shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap"
             >
               Revisar
@@ -603,7 +606,7 @@ export function Dashboard() {
       {reviewingCandidate && (
         <Dialog
           isOpen={!!reviewingCandidate}
-          onClose={() => setReviewingCandidate(null)}
+          onClose={() => { setReviewingCandidate(null); setCandidateSample([]); }}
           title="Revisar Novo Formato de Relatório"
           size="lg"
         >
@@ -616,31 +619,52 @@ export function Dashboard() {
             </div>
 
             <div className="max-h-64 overflow-y-auto space-y-2.5 pr-1">
-              {reviewingCandidate.resultadosSample && reviewingCandidate.resultadosSample.length > 0 ? (
-                reviewingCandidate.resultadosSample.map((paciente: any, index: number) => (
-                  <div key={index} className="p-3 border border-zinc-200 bg-white rounded-xl flex items-center justify-between gap-3 shadow-sm">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-black text-zinc-800 uppercase tracking-tight truncate">{paciente.nome_paciente || 'Sem nome'}</div>
-                      <div className="flex items-center gap-1.5 text-[8px] font-extrabold text-[#8592A6] uppercase tracking-widest mt-0.5">
-                        <span>Atd: {paciente.numero_atendimento || 'Não inf.'}</span>
-                        {paciente.data_atendimento && (
-                          <>
-                            <span className="w-1 h-1 rounded-full bg-zinc-200"></span>
-                            <span>{paciente.data_atendimento}</span>
-                          </>
+              {candidateSample.length > 0 ? (
+                candidateSample.map((paciente: any, index: number) => {
+                  const CAMPO_LABEL: Record<string, string> = {
+                    nome_paciente: 'Paciente', numero_atendimento: 'Atendimento', data_atendimento: 'Data',
+                    valor: 'Valor', convenio: 'Convênio', atividade: 'Atividade', codigo_tuss: 'Código TUSS',
+                    procedimento: 'Procedimento'
+                  };
+                  const CAMPO_ORDEM = ['nome_paciente', 'numero_atendimento', 'data_atendimento', 'convenio', 'atividade', 'codigo_tuss', 'procedimento', 'valor'];
+                  const chaves = [
+                    ...CAMPO_ORDEM.filter(k => paciente[k] !== undefined && paciente[k] !== null && paciente[k] !== ''),
+                    ...Object.keys(paciente).filter(k => !CAMPO_ORDEM.includes(k) && k !== 'breakdown' && paciente[k] !== undefined && paciente[k] !== null && paciente[k] !== '')
+                  ];
+                  return (
+                    <div key={index} className="p-3 border border-zinc-200 bg-white rounded-xl relative shadow-sm">
+                      <button
+                        type="button"
+                        onClick={() => setCandidateSample(prev => prev.filter((_, i) => i !== index))}
+                        title="Excluir este registro da amostra"
+                        className="absolute top-2 right-2 w-5 h-5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                      <div className="pr-6 space-y-0.5">
+                        {chaves.map(k => (
+                          <div key={k} className="flex items-center justify-between gap-2 text-[10px]">
+                            <span className="font-black text-[#8592A6] uppercase tracking-widest">{CAMPO_LABEL[k] || k}</span>
+                            <span className="font-black text-zinc-800 text-right">{k === 'valor' ? formatCurrency(paciente[k]) : String(paciente[k])}</span>
+                          </div>
+                        ))}
+                        {paciente.breakdown && (
+                          <div className="pt-1 mt-1 border-t border-dashed border-zinc-150 space-y-0.5">
+                            {Object.entries(paciente.breakdown).map(([papel, v]: [string, any]) => (
+                              <div key={papel} className="flex items-center justify-between text-[9px] text-zinc-400">
+                                <span>{papel}</span>
+                                <span>{formatCurrency(v)}</span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>
-                    <div className="shrink-0">
-                      <span style={{ fontFamily: "'JetBrains Mono', monospace" }} className="text-[11px] font-black text-zinc-900 bg-zinc-50 border border-zinc-100 px-2 py-1 rounded-lg">
-                        {formatCurrency(paciente.valor)}
-                      </span>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="p-6 text-center text-zinc-400 italic text-[11px] border border-dashed border-zinc-200 rounded-xl">
-                  Nenhum dado de paciente extraído nesta amostra.
+                  Nenhum registro restante nesta amostra.
                 </div>
               )}
             </div>
