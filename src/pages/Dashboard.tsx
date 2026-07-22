@@ -22,7 +22,9 @@ import {
   Plus,
   TrendingDown,
   History,
-  CalendarCheck
+  CalendarCheck,
+  AlertTriangle,
+  MessageCircle
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { formatCurrency, cn, safeFormat } from '../lib/utils';
@@ -103,6 +105,22 @@ export function Dashboard() {
   const totalBilled = data.invoices.reduce((acc, inv) => acc + (inv.netAmount || inv.amount || 0), 0);
   const totalReceived = data.payments.filter(p => (p.amount || 0) > 0).reduce((acc, p) => acc + (p.amount || 0), 0);
   const pending = totalBilled - totalReceived;
+
+  // Solicitações de cirurgia eletiva feitas há mais de 2 meses, ainda sem liberação
+  const overdueCutoff = subMonths(new Date(), 2);
+  const overdueElective = (data.electiveSurgeries || []).filter(s => {
+    if (!s.date) return false;
+    const d = parseISO(s.date);
+    return !isNaN(d.getTime()) && d < overdueCutoff;
+  });
+  const handleOverdueWhatsApp = () => {
+    let text = `Pendências Cirúrgicas (aguardando liberação há mais de 2 meses):\n\n`;
+    overdueElective.forEach(s => {
+      const hospital = data.hospitals.find(h => h.id === s.hospitalId);
+      text += `- ${s.patientName} — ${hospital?.name || 'Hospital não informado'} (solicitado em ${safeFormat(s.date, 'dd/MM/yy')})\n`;
+    });
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  };
 
   const now = new Date();
   const currentMonthName = format(now, 'MMMM', { locale: ptBR });
@@ -294,6 +312,41 @@ export function Dashboard() {
       </PageHeader>
 
       <main className="flex-1 p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full">
+        {overdueElective.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 md:p-5 bg-amber-50 border border-amber-200 rounded-[20px] shadow-sm animate-fade-in"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-[11px] font-black text-amber-950 uppercase tracking-widest">Pendências Cirúrgicas</h4>
+                <p className="text-xs text-amber-800 font-medium mt-0.5">
+                  ⏳ <strong className="font-extrabold">{overdueElective.length}</strong> paciente(s) aguardando liberação há mais de 2 meses
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button 
+                onClick={handleOverdueWhatsApp}
+                className="px-4 py-2.5 bg-[#10b981] hover:opacity-90 text-white text-[9px] font-black uppercase tracking-widest rounded-xl shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                WhatsApp
+              </button>
+              <Link 
+                to="/pendencias-cirurgicas"
+                className="px-4 py-2.5 bg-[#162744] hover:bg-[#203a64] text-white text-[9px] font-black uppercase tracking-widest rounded-xl shadow-md transition-all active:scale-95 cursor-pointer whitespace-nowrap flex items-center"
+              >
+                Ver Lista
+              </Link>
+            </div>
+          </motion.div>
+        )}
+
         {pendingCandidates.length > 0 && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}

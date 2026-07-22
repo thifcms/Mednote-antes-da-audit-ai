@@ -12,6 +12,7 @@ import { Payments } from './pages/Payments';
 import { Preferences } from './pages/Preferences';
 import { ZeroFeesSurgeries } from './pages/ZeroFeesSurgeries';
 import { ParticularPendingSurgeries } from './pages/ParticularPendingSurgeries';
+import { SurgicalPendencies } from './pages/SurgicalPendencies';
 import { PaymentReconciliation } from './pages/PaymentReconciliation';
 import { LoginPage } from './pages/LoginPage';
 import { SplashScreen } from './components/SplashScreen';
@@ -33,6 +34,7 @@ function AnimatedRoutes() {
         <Route path="/preferencias" element={<Preferences />} />
         <Route path="/honorarios-zero" element={<ZeroFeesSurgeries />} />
         <Route path="/particulares-pendentes" element={<ParticularPendingSurgeries />} />
+        <Route path="/pendencias-cirurgicas" element={<SurgicalPendencies />} />
         <Route path="/conciliacao" element={<PaymentReconciliation />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

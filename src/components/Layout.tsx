@@ -17,7 +17,8 @@ import {
   CalendarCheck,
   Cloud,
   CloudOff,
-  CloudDownload
+  CloudDownload,
+  AlertTriangle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useApp } from '../store/AppContext';
@@ -29,6 +30,7 @@ const routesOrder = [
   '/recebimentos',
   '/cadastros',
   '/eletivas',
+  '/pendencias-cirurgicas',
   '/cirurgias',
   '/conciliacao',
   '/preferencias'
@@ -163,6 +165,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Recebimentos', href: '/recebimentos', icon: Banknote, category: 'Gestão' },
     { name: 'Pagadores', href: '/cadastros', icon: CreditCard, category: 'Gestão' },
     { name: 'Eletivas Solicitadas', href: '/eletivas', icon: CalendarCheck, category: 'Procedimentos' },
+    { name: 'Pendências Cirúrgicas', href: '/pendencias-cirurgicas', icon: AlertTriangle, category: 'Procedimentos' },
     { name: 'Cirurgias Realizadas', href: '/cirurgias', icon: Activity, category: 'Procedimentos' },
     { name: 'Conciliação Cirúrgica', href: '/conciliacao', icon: History, category: 'Procedimentos' },
   ];
