@@ -97,10 +97,10 @@ export function SurgicalPendencies() {
 
         {gruposArray.map(g => (
           <div key={g.hospitalName} className="space-y-3">
-            <div className="flex items-center gap-2 px-1">
-              <HospitalIcon className="w-4 h-4 text-[#8592A6]" />
-              <h3 className="text-[11px] font-black text-[#162744] uppercase tracking-widest">{g.hospitalName}</h3>
-              <span className="text-[9px] font-bold text-zinc-400">({g.pacientes.length})</span>
+            <div className="flex items-center gap-2 px-1 min-w-0">
+              <HospitalIcon className="w-4 h-4 text-[#8592A6] shrink-0" />
+              <h3 className="text-[11px] font-black text-[#162744] uppercase tracking-widest truncate">{g.hospitalName}</h3>
+              <span className="text-[9px] font-bold text-zinc-400 shrink-0">({g.pacientes.length})</span>
             </div>
             <div className="grid grid-cols-1 gap-3">
               {g.pacientes.map(s => (
@@ -109,19 +109,19 @@ export function SurgicalPendencies() {
                   style={{ borderRadius: 16, boxShadow: "0 1px 4px rgba(15,32,68,.06)", border: "1px solid #EAECF4" }}
                   className="bg-white p-5 group transition-all duration-150 hover:border-[#162744]"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-zinc-50 rounded-lg group-hover:bg-[#162744]/5 transition-colors">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="p-2 bg-zinc-50 rounded-lg group-hover:bg-[#162744]/5 transition-colors shrink-0">
                         <User className="w-4 h-4 text-[#8592A6]" />
                       </div>
-                      <div>
-                        <h4 className="font-extrabold text-[#162744] uppercase text-xs tracking-tight">{s.patientName}</h4>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-extrabold text-[#162744] uppercase text-xs tracking-tight truncate">{s.patientName}</h4>
                         <span className="text-[10px] font-bold text-zinc-500 uppercase truncate block mt-0.5">{s.procedure}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-amber-600">
-                      <Calendar className="w-3 h-3" />
-                      {safeFormat(s.date, 'dd.MM.yyyy', 'DATA NÃO INFORMADA')}
+                    <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-amber-600 shrink-0 whitespace-nowrap">
+                      <Calendar className="w-3 h-3 shrink-0" />
+                      {safeFormat(s.date, 'dd.MM.yyyy', '—')}
                     </div>
                   </div>
                 </div>
