@@ -1338,7 +1338,7 @@ export function Surgeries() {
         'Hospital': hosp?.name || '',
         'Honorários Pagos': s.feesPaid,
         'Recebidos': s.receivedAmount,
-        'Status': s.receivedAmount >= s.feesPaid ? 'Pago' : (s.receivedAmount > 0 ? 'Parcial' : 'Pendente')
+        'Status': (s.feesPaid || 0) > 0 ? 'Pago' : 'Pendente'
       };
     });
 
@@ -1594,7 +1594,7 @@ export function Surgeries() {
           >
             <div className="text-[9px] font-black text-zinc-300 uppercase tracking-widest mb-1 group-hover:text-zinc-400 transition-colors">Cirurgias Pendentes</div>
             <div className="text-2xl font-bold text-zinc-900 font-mono tracking-tighter tabular-nums text-red-600">
-              {data.surgeries.filter(s => (s.receivedAmount || 0) === 0).length}
+              {data.surgeries.filter(s => (s.feesPaid || 0) === 0).length}
             </div>
           </button>
           
@@ -2512,14 +2512,14 @@ export function Surgeries() {
                <div className="flex items-center justify-between">
                   <div>
                      <div className="text-xl font-black text-zinc-900">
-                       {data.surgeries.filter(s => (s.receivedAmount || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter)).length} Pacientes
+                       {data.surgeries.filter(s => (s.feesPaid || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter)).length} Pacientes
                      </div>
                      <div className="text-[8px] text-zinc-400 font-black uppercase tracking-widest">Aguardando recebimento de honorários</div>
                   </div>
                   <div className="flex gap-2">
                      <button 
                        onClick={() => {
-                         const pending = data.surgeries.filter(s => (s.receivedAmount || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter));
+                         const pending = data.surgeries.filter(s => (s.feesPaid || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter));
                          const text = `Lista de Cirurgias Pendentes:\n\n` + 
                            pending.map(s => {
                              const hosp = data.hospitals.find(h => h.id === s.hospitalId)?.name || '---';
@@ -2535,7 +2535,7 @@ export function Surgeries() {
                      </button>
                      <button 
                        onClick={() => {
-                         const pending = data.surgeries.filter(s => (s.receivedAmount || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter));
+                         const pending = data.surgeries.filter(s => (s.feesPaid || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter));
                          const text = `Lista de Cirurgias Pendentes:\n\n` + 
                            pending.map(s => {
                              const hosp = data.hospitals.find(h => h.id === s.hospitalId)?.name || '---';
@@ -2580,7 +2580,7 @@ export function Surgeries() {
                   </thead>
                   <tbody className="divide-y divide-zinc-50">
                      {[...data.surgeries]
-                       .filter(s => (s.receivedAmount || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter))
+                       .filter(s => (s.feesPaid || 0) === 0 && (pendingHospitalFilter === 'ALL' || s.hospitalId === pendingHospitalFilter))
                        .sort((a,b) => {
                          const timeA = a.date ? new Date(a.date).getTime() : 0;
                          const timeB = b.date ? new Date(b.date).getTime() : 0;
