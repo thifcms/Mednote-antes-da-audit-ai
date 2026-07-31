@@ -1849,26 +1849,6 @@ export function Surgeries() {
                       <td style={{ padding: "12px 14px", textAlign: "right", fontSize: 12, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#162744" }}>{formatCurrency(surgery.receivedAmount)}</td>
                         <td className="px-4 py-4 text-center">
                          <div className="flex items-center justify-center gap-2">
-                            {surgery.receivedAmount > 0 && (
-                              <button 
-                                type="button"
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  if (window.confirm(`Deseja realmente reverter o pagamento da cirurgia de ${surgery.patientName} de volta para Pendente?`)) {
-                                    try {
-                                      await updateSurgery(surgery.id, { receivedAmount: 0 });
-                                      toast.success("Status de pagamento revertido para Pendente!");
-                                    } catch (err) {
-                                      toast.error("Erro ao reverter pagamento.");
-                                    }
-                                  }
-                                }}
-                                className="px-2 py-1 text-[9px] font-black uppercase tracking-tight text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-lg transition-all"
-                                title="Reverter Pagamento para Pendente"
-                              >
-                                 ↩ Reverter
-                              </button>
-                            )}
                             <button 
                               type="button"
                               onClick={(e) => {
@@ -2347,6 +2327,25 @@ export function Surgeries() {
                   <div><label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">HONORÁRIOS (R$)</label><input name="feesPaid" type="number" step="0.01" defaultValue={draftSurgery.feesPaid || 0} className="w-full p-3 text-xs font-bold border rounded-2xl" /></div>
                   <div><label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1 block">RECEBIDOS (R$)</label><input name="receivedAmount" type="number" step="0.01" defaultValue={draftSurgery.receivedAmount || 0} className="w-full p-3 text-xs font-bold border rounded-2xl" /></div>
                </div>
+               {draftSurgery.id && draftSurgery.receivedAmount > 0 && (
+                 <button
+                   type="button"
+                   onClick={async () => {
+                     if (window.confirm(`Deseja realmente reverter o pagamento da cirurgia de ${draftSurgery.patientName} de volta para Pendente?`)) {
+                       try {
+                         await updateSurgery(draftSurgery.id, { receivedAmount: 0 });
+                         toast.success("Status de pagamento revertido para Pendente!");
+                         setDraftSurgery((prev: any) => ({ ...prev, receivedAmount: 0 }));
+                       } catch (err) {
+                         toast.error("Erro ao reverter pagamento.");
+                       }
+                     }
+                   }}
+                   className="w-full py-2.5 text-[9px] font-black uppercase tracking-widest text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-xl transition-all"
+                 >
+                   ↩ Reverter Pagamento para Pendente
+                 </button>
+               )}
             </div>
             {currentItemIdInModal ? (
               <div className="flex gap-3 pt-2">
