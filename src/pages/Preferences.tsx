@@ -589,6 +589,10 @@ export function Preferences() {
             Apagar todos os dados
           </button>
         </div>
+
+        <div className="text-center pt-2 pb-4">
+          <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest">Versão do app: 2026-08-01</span>
+        </div>
       </div>
       
       <Dialog isOpen={showDeleteConfirm} onClose={() => setShowDeleteConfirm(false)} title="Confirmar Exclusão Total">
