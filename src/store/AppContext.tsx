@@ -887,6 +887,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await setDoc(doc(db, 'users', user.uid), { taxPercentage: percentage }, { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+      throw err;
     }
   };
 
@@ -896,6 +897,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await setDoc(doc(db, 'users', user.uid), { appPassword: newPassword }, { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+      throw err;
     }
   };
 
@@ -916,6 +918,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setData(prev => ({ ...prev, doctorName: name }));
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+      throw err;
     }
   };
 

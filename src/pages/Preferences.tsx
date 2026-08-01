@@ -122,30 +122,38 @@ export function Preferences() {
     }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const value = parseFloat(percentage.replace(',', '.'));
     if (!isNaN(value)) {
-      updateTaxPercentage(value);
-      toast.success("Alíquota atualizada!");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      try {
+        await updateTaxPercentage(value);
+        toast.success("Alíquota atualizada!");
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      } catch (err) {
+        toast.error("Falha ao salvar a alíquota. Tente novamente.");
+      }
     }
   };
 
-  const handleSaveDoctorName = (e: React.FormEvent) => {
+  const handleSaveDoctorName = async (e: React.FormEvent) => {
     e.preventDefault();
     if (doctorNameInput.trim()) {
-      updateDoctorName(doctorNameInput.trim());
-      toast.success("Nome do médico atualizado!");
-      setDoctorNameSaved(true);
-      setTimeout(() => setDoctorNameSaved(false), 3000);
+      try {
+        await updateDoctorName(doctorNameInput.trim());
+        toast.success("Nome do médico atualizado!");
+        setDoctorNameSaved(true);
+        setTimeout(() => setDoctorNameSaved(false), 3000);
+      } catch (err) {
+        toast.error("Falha ao salvar o nome do médico. Tente novamente.");
+      }
     } else {
       toast.error("O nome do médico não pode ser vazio.");
     }
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     const storedPassword = data.appPassword || '1234';
     if (oldPassword !== storedPassword) {
@@ -156,13 +164,17 @@ export function Preferences() {
       toast.error('Senhas não coincidem');
       return;
     }
-    updateAppPassword(newPassword);
-    toast.success("Senha do aplicativo alterada!");
-    setPasswordSaved(true);
-    setOldPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
-    setTimeout(() => setPasswordSaved(false), 3000);
+    try {
+      await updateAppPassword(newPassword);
+      toast.success("Senha do aplicativo alterada!");
+      setPasswordSaved(true);
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setPasswordSaved(false), 3000);
+    } catch (err) {
+      toast.error("Falha ao alterar a senha. Tente novamente.");
+    }
   };
 
   const handleDeleteAll = async () => {
