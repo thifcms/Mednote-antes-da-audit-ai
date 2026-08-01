@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Logo } from './Logo';
 import { 
@@ -82,6 +82,21 @@ const isInsideRestrictedElement = (el: HTMLElement | null): boolean => {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // No computador, a barra abre ao encostar o mouse na borda esquerda e
+  // fecha sozinha (com um pequeno atraso) quando o mouse sai da área dela —
+  // o atraso evita fechar por acidente ao mover o mouse rapidamente.
+  const cancelSidebarClose = () => {
+    if (sidebarCloseTimeoutRef.current) {
+      clearTimeout(sidebarCloseTimeoutRef.current);
+      sidebarCloseTimeoutRef.current = null;
+    }
+  };
+  const scheduleSidebarClose = () => {
+    cancelSidebarClose();
+    sidebarCloseTimeoutRef.current = setTimeout(() => setSidebarOpen(false), 300);
+  };
   const { user, logout, isOffline, isSyncing } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
@@ -188,24 +203,34 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </button>
       </div>
 
+      {/* Faixa invisível na borda esquerda — só no computador (dispositivos com 
+          mouse/hover). Encostar o mouse aqui abre a barra lateral. */}
+      <div
+        className="hidden md:block fixed left-0 inset-y-0 w-3 z-[65]"
+        onMouseEnter={() => { cancelSidebarClose(); setSidebarOpen(true); }}
+      />
+
       {/* Sidebar background overlay */}
       {sidebarOpen && (
         <div 
-          className="md:hidden fixed inset-0 bg-zinc-900/40 backdrop-blur-sm z-[60] transition-all duration-300"
+          className="fixed inset-0 bg-zinc-900/40 backdrop-blur-sm z-[60] transition-all duration-300"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
       {/* Sidebar */}
-      <aside className={cn(
-        "fixed md:static inset-y-0 left-0 bg-white border-r border-zinc-200 w-72 flex flex-col z-[70] transition-all duration-500 ease-in-out shadow-2xl md:shadow-none",
-        sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      <aside 
+        onMouseEnter={cancelSidebarClose}
+        onMouseLeave={scheduleSidebarClose}
+        className={cn(
+        "fixed inset-y-0 left-0 bg-white border-r border-zinc-200 w-72 flex flex-col z-[70] transition-all duration-500 ease-in-out shadow-2xl",
+        sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="flex items-center justify-between bg-[#162744]" style={{ padding: "20px 22px 22px", borderBottom: "1px solid #0f1b32" }}>
            <Logo className="h-16 w-auto" isDarkBackground={true} />
            <button 
              onClick={() => setSidebarOpen(false)} 
-             className="md:hidden p-2 text-white transition-colors hover:bg-[rgba(255,255,255,0.14)]"
+             className="p-2 text-white transition-colors hover:bg-[rgba(255,255,255,0.14)]"
              style={{
                background: "rgba(255,255,255,0.07)",
                border: "1px solid rgba(255,255,255,0.1)",
