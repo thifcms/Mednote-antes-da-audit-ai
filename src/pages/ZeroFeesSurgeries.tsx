@@ -21,7 +21,7 @@ export function ZeroFeesSurgeries() {
   const handleWhatsAppShare = () => {
     const text = `Cirurgias Pendentes:\n\n${zeroFeesSurgeries.map(s => {
       const hospital = data.hospitals.find(h => h.id === s.hospitalId);
-      return `- ${s.patientName} (${safeFormat(s.date, 'dd/MM/yy')}) - ${hospital?.name || 'Hospital não informado'}`;
+      return `- ${s.patientName} | Atendimento: ${s.attendance || '—'} | ${safeFormat(s.date, 'dd/MM/yy')} | ${s.procedure || '—'} | ${hospital?.name || 'Hospital não informado'}`;
     }).join('\n')}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
@@ -30,7 +30,7 @@ export function ZeroFeesSurgeries() {
     const subject = "Relatório de Cirurgias Pendentes";
     const body = `Lista de Pacientes:\n\n${zeroFeesSurgeries.map(s => {
       const hospital = data.hospitals.find(h => h.id === s.hospitalId);
-      return `- ${s.patientName} (${safeFormat(s.date, 'dd/MM/yy')}) - ${hospital?.name || 'Hospital não informado'}`;
+      return `- ${s.patientName} | Atendimento: ${s.attendance || '—'} | ${safeFormat(s.date, 'dd/MM/yy')} | ${s.procedure || '—'} | ${hospital?.name || 'Hospital não informado'}`;
     }).join('\n')}`;
     window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
   };
