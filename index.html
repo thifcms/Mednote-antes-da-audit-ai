@@ -19,8 +19,39 @@
     <script type="module" src="/src/main.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
+        let refreshing = false;
+
+        // Recarrega a página UMA VEZ quando um novo service worker assume o
+        // controle — garante que a versão mais recente do app é sempre
+        // aplicada automaticamente, sem precisar de reload manual.
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
+
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('sw.js').catch(err => {
+          navigator.serviceWorker.register('sw.js').then((registration) => {
+            // Checa ativamente se existe uma versão nova assim que o app abre,
+            // em vez de depender só da checagem periódica automática do navegador.
+            registration.update().catch(() => {});
+
+            // Se já existir um worker esperando (baixado antes, mas ainda não
+            // ativado), assume ele imediatamente.
+            if (registration.waiting) {
+              registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+            }
+
+            registration.addEventListener('updatefound', () => {
+              const newWorker = registration.installing;
+              if (!newWorker) return;
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  newWorker.postMessage({ type: 'SKIP_WAITING' });
+                }
+              });
+            });
+          }).catch(err => {
             console.error('SW registration failed: ', err);
           });
         });

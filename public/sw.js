@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mednote-v2';
+const CACHE_NAME = 'mednote-v3';
 const BASE = '/Mednote-antes-da-audit-ai/';
 const ASSETS = [
   BASE,
@@ -14,6 +14,12 @@ self.addEventListener('install', (e) => {
     caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
   );
   self.skipWaiting();
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (e) => {
