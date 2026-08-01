@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { PageHeader } from '../components/PageHeader';
 import { Share2, Mail, MessageCircle, ArrowLeft, User, Calendar, Hospital as HospitalIcon } from 'lucide-react';
@@ -8,9 +8,10 @@ import { safeFormat } from '../lib/utils';
 
 export function ZeroFeesSurgeries() {
   const { data } = useApp();
+  const [hospitalFilter, setHospitalFilter] = useState('ALL');
   
   const zeroFeesSurgeries = data.surgeries
-    .filter(s => (s.feesPaid || 0) === 0)
+    .filter(s => (s.feesPaid || 0) === 0 && (hospitalFilter === 'ALL' || s.hospitalId === hospitalFilter))
     .sort((a, b) => {
       const dateA = a.date ? new Date(a.date).getTime() : 0;
       const dateB = b.date ? new Date(b.date).getTime() : 0;
@@ -18,13 +19,19 @@ export function ZeroFeesSurgeries() {
     });
 
   const handleWhatsAppShare = () => {
-    const text = `Cirurgias Pendentes:\n\n${zeroFeesSurgeries.map(s => `- ${s.patientName} (${safeFormat(s.date, 'dd/MM/yy')})`).join('\n')}`;
+    const text = `Cirurgias Pendentes:\n\n${zeroFeesSurgeries.map(s => {
+      const hospital = data.hospitals.find(h => h.id === s.hospitalId);
+      return `- ${s.patientName} (${safeFormat(s.date, 'dd/MM/yy')}) - ${hospital?.name || 'Hospital não informado'}`;
+    }).join('\n')}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
   const handleEmailShare = () => {
     const subject = "Relatório de Cirurgias Pendentes";
-    const body = `Lista de Pacientes:\n\n${zeroFeesSurgeries.map(s => `- ${s.patientName} (${safeFormat(s.date, 'dd/MM/yy')})`).join('\n')}`;
+    const body = `Lista de Pacientes:\n\n${zeroFeesSurgeries.map(s => {
+      const hospital = data.hospitals.find(h => h.id === s.hospitalId);
+      return `- ${s.patientName} (${safeFormat(s.date, 'dd/MM/yy')}) - ${hospital?.name || 'Hospital não informado'}`;
+    }).join('\n')}`;
     window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
   };
 
@@ -67,6 +74,20 @@ export function ZeroFeesSurgeries() {
                   <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest">Honorários marcados como zero (R$ 0,00)</p>
                </div>
             </div>
+         </div>
+
+         <div className="bg-white p-4 border border-zinc-100 rounded-2xl">
+            <label className="text-[9px] font-black text-zinc-400 uppercase tracking-widest block mb-1.5">Filtrar por hospital</label>
+            <select
+              value={hospitalFilter}
+              onChange={(e) => setHospitalFilter(e.target.value)}
+              className="w-full p-2.5 text-[10px] font-black uppercase tracking-widest bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-0"
+            >
+              <option value="ALL">Todos os Hospitais</option>
+              {data.hospitals.map(h => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
          </div>
 
          <div className="grid grid-cols-1 gap-4">
