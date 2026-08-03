@@ -82,7 +82,7 @@ export function SurgicalPendencies() {
         </div>
       </PageHeader>
 
-      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-4xl mx-auto w-full">
+      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-[1600px] mx-auto w-full">
         <div className="bg-amber-50/65 border border-amber-100 p-6" style={{ borderRadius: 16 }}>
           <div className="flex items-center gap-6">
             <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center border border-amber-100 shadow-sm">

@@ -314,7 +314,7 @@ export function Dashboard() {
         </div>
       </PageHeader>
 
-      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full">
+      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-[1600px] mx-auto w-full">
         {overdueElective.length > 0 && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}

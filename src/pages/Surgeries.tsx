@@ -1565,7 +1565,7 @@ export function Surgeries() {
         </button>
       </PageHeader>
 
-      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-5xl mx-auto w-full">
+      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-[1600px] mx-auto w-full">
         {errorMessage && (
            <div className="bg-red-50 text-red-700 p-4 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-between gap-2 border border-red-100">
              <span>{errorMessage}</span>

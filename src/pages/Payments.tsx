@@ -163,7 +163,7 @@ export function Payments() {
         </div>
       </PageHeader>
 
-      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-5xl mx-auto w-full">
+      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-[1600px] mx-auto w-full">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div 
             style={{ borderRadius: 16, border: "1px solid #EAECF4", boxShadow: "0 1px 4px rgba(15,32,68,.06)", background: "#FFFFFF", padding: 24 }}

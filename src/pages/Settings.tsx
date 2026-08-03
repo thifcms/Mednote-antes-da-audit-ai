@@ -67,7 +67,7 @@ export function Settings() {
         </div>
       </header>
 
-      <div className="flex-1 p-4 md:p-8 space-y-8 overflow-y-auto w-full max-w-5xl mx-auto">
+      <div className="flex-1 p-4 md:p-8 space-y-8 overflow-y-auto w-full max-w-[1600px] mx-auto">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Fontes Pagadoras */}
           <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col min-h-[600px]">

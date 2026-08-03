@@ -295,7 +295,7 @@ export function ElectiveSurgeries() {
         </div>
       </PageHeader>
 
-      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-5xl mx-auto w-full">
+      <main className="flex-1 p-4 md:p-8 space-y-6 max-w-[1600px] mx-auto w-full">
          <div className={cn(
            "p-8 rounded-3xl shadow-xl shadow-zinc-200 text-center flex flex-col items-center justify-center border group transition-colors duration-300",
            activeTab === 'active' 
