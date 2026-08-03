@@ -591,7 +591,7 @@ export function Preferences() {
         </div>
 
         <div className="text-center pt-2 pb-4">
-          <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest">Versão do app: 2026-08-01</span>
+          <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-widest">Versão do app: 2026-08-03</span>
         </div>
       </div>
       
