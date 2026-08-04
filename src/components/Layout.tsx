@@ -203,6 +203,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </button>
       </div>
 
+      {/* Botão de abrir menu no computador — fica fixo no canto superior direito,
+          complementando a faixa de hover na borda esquerda. */}
+      <button
+        onClick={() => setSidebarOpen(true)}
+        className="hidden md:flex items-center justify-center fixed top-4 right-4 z-[65] p-2.5 text-white transition-colors hover:bg-[rgba(255,255,255,0.14)]"
+        style={{
+          background: "#162744",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 10,
+          boxShadow: "0 2px 10px rgba(15,32,68,.25)"
+        }}
+        title="Abrir menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
       {/* Faixa invisível na borda esquerda — só no computador (dispositivos com 
           mouse/hover). Encostar o mouse aqui abre a barra lateral. */}
       <div
